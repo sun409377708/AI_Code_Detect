@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PR-Agent 代码审查平台</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/static/result-formatter.js"></script>
+    <script src="/static/prompts.js"></script>
+    <script src="/static/commits.js"></script>
+    <style>
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .spinner {
+            animation: spin 1s linear infinite;
+        }
+        .progress-bar {
+            transition: width 0.3s ease;
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <div class="min-h-screen">
+        <!-- 头部 -->
+        <header class="bg-white shadow">
+            <div class="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
+                <h1 class="text-3xl font-bold text-gray-900">
+                    PR-Agent 代码审查平台
+                </h1>
+                <p class="mt-2 text-sm text-gray-600">
+                    AI 驱动的 GitLab Merge Request 自动化审查工具
+                </p>
+            </div>
+        </header>
+
+        <!-- 主内容 -->
+        <main class="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+            <!-- 项目输入区 -->
+            <div class="px-4 py-6 sm:px-0">
+                <div class="bg-white shadow rounded-lg p-6">
+                    <h2 class="text-lg font-medium text-gray-900 mb-4">项目配置</h2>
+                    <div class="space-y-4">
+                        <div class="flex gap-4">
+                            <input 
+                                type="text" 
+                                id="projectUrl" 
+                                placeholder="输入项目 URL，例如: http://gitlab.it.ikang.com/ios/ikangapp"
+                                class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 px-4 py-2 border"
+                                value="http://gitlab.it.ikang.com/ios/ikangapp"
+                            >
+                            <button 
+                                onclick="loadMRs()" 
+                                class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-md font-medium"
+                            >
+                                加载 MR 列表
+                            </button>
+                        </div>
+                        <div class="flex gap-4 items-center">
+                            <label class="text-sm font-medium text-gray-700">MR 状态:</label>
+                            <select 
+                                id="mrState" 
+                                class="rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 px-4 py-2 border"
+                                onchange="loadMRs()"
+                            >
+                                <option value="opened">Open (未合并)</option>
+                                <option value="merged">Merged (已合并)</option>
+                                <option value="closed">Closed (已关闭)</option>
+                                <option value="all">All (全部)</option>
+                            </select>
+                            <span class="text-sm text-gray-500">选择要查看的 MR 状态</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- MR 列表区 -->
+            <div class="px-4 py-6 sm:px-0">
+                <div class="bg-white shadow rounded-lg p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-lg font-medium text-gray-900">
+                            <span id="mrTitle">Merge Requests</span> <span id="mrCount" class="text-gray-500"></span>
+                        </h2>
+                        <button 
+                            onclick="batchReview()" 
+                            id="batchReviewBtn"
+                            class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md font-medium text-sm hidden"
+                        >
+                            批量审查未审查的 MR
+                        </button>
+                    </div>
+                    
+                    <div id="mrList" class="space-y-4">
+                        <p class="text-gray-500 text-center py-8">请输入项目 URL 并点击"加载 MR 列表"</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 配置信息 -->
+            <div class="px-4 py-6 sm:px-0">
+                <div class="bg-white shadow rounded-lg p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-lg font-medium text-gray-900">系统配置</h2>
+                        <button 
+                            onclick="toggleConfigEdit()" 
+                            id="editConfigBtn"
+                            class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded text-sm font-medium"
+                        >
+                            编辑配置
+                        </button>
+                    </div>
+                    
+                    <!-- 显示模式 -->
+                    <div id="configDisplay" class="text-sm text-gray-600 space-y-2">
+                        <p>加载中...</p>
+                    </div>
+                    
+                    <!-- 编辑模式 -->
+                    <div id="configEdit" class="hidden space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">GitLab URL</label>
+                            <input type="text" id="editGitlabUrl" class="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 px-4 py-2 border">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">GitLab Token</label>
+                            <input type="password" id="editGitlabToken" class="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 px-4 py-2 border">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">AI API Key</label>
+                            <input type="password" id="editOpenaiKey" class="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 px-4 py-2 border">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">AI API Base URL</label>
+                            <input type="text" id="editOpenaiApiBase" class="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 px-4 py-2 border">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">AI Model</label>
+                            <input type="text" id="editModel" class="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 px-4 py-2 border">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">响应语言</label>
+                            <input type="text" id="editLanguage" class="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 px-4 py-2 border">
+                        </div>
+                        <div class="flex gap-2">
+                            <button onclick="testConnection()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded text-sm font-medium">
+                                测试连接
+                            </button>
+                            <button onclick="saveConfig()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded text-sm font-medium">
+                                保存配置
+                            </button>
+                            <button onclick="toggleConfigEdit()" class="bg-gray-300 hover:bg-gray-400 text-gray-700 px-4 py-2 rounded text-sm font-medium">
+                                取消
+                            </button>
+                        </div>
+                        <div id="configMessage" class="hidden mt-2 p-3 rounded"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Prompt 配置 -->
+            <div class="px-4 py-6 sm:px-0">
+                <div class="bg-white shadow rounded-lg p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <div>
+                            <h2 class="text-lg font-medium text-gray-900">AI 审查 Prompt</h2>
+                            <p class="text-sm text-gray-500 mt-1">自定义 AI 的审查重点和风格</p>
+                        </div>
+                        <button 
+                            onclick="togglePromptEdit()" 
+                            id="editPromptBtn"
+                            class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded text-sm font-medium"
+                        >
+                            编辑 Prompt
+                        </button>
+                    </div>
+                    
+                    <!-- 显示模式 -->
+                    <div id="promptDisplay" class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">当前使用的 Prompt 模板</label>
+                            <div id="currentPromptInfo" class="bg-gray-50 rounded p-4">
+                                <p class="text-sm text-gray-600">加载中...</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 编辑模式 -->
+                    <div id="promptEdit" class="hidden space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">选择 Prompt 模板</label>
+                            <select 
+                                id="promptTemplate" 
+                                class="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 px-4 py-2 border"
+                                onchange="loadPromptTemplate()"
+                            >
+                                <option value="default">默认审查</option>
+                                <option value="ios">iOS 项目</option>
+                                <option value="backend">后端 API</option>
+                                <option value="frontend">前端项目</option>
+                                <option value="security">安全审查</option>
+                                <option value="performance">性能优化</option>
+                                <option value="custom">自定义</option>
+                            </select>
+                            <p id="promptDescription" class="text-sm text-gray-500 mt-1"></p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">Prompt 内容</label>
+                            <textarea 
+                                id="promptContent" 
+                                rows="10"
+                                class="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 px-4 py-2 border font-mono text-sm"
+                                placeholder="输入自定义的审查 Prompt..."
+                            ></textarea>
+                            <p class="text-xs text-gray-500 mt-1">
+                                💡 提示：Prompt 会影响 AI 的审查重点和风格，可以根据项目类型调整
+                            </p>
+                        </div>
+                        <div class="flex gap-2">
+                            <button onclick="savePrompt()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded text-sm font-medium">
+                                保存并应用
+                            </button>
+                            <button onclick="togglePromptEdit()" class="bg-gray-300 hover:bg-gray-400 text-gray-700 px-4 py-2 rounded text-sm font-medium">
+                                取消
+                            </button>
+                        </div>
+                        <div id="promptMessage" class="hidden mt-2 p-3 rounded"></div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        let currentMRs = [];
+        let currentConfig = {};
+        let currentPrompts = {};
+
+        // HTML 转义函数
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // 页面加载时获取配置信息
+        window.onload = function() {
+            loadConfig();
+            loadPrompts();
+        };
+
+        // 加载配置信息
+        async function loadConfig() {
+            try {
+                const response = await fetch('/api/config');
+                const data = await response.json();
+                currentConfig = data.full;
+                
+                document.getElementById('configDisplay').innerHTML = `
+                    <p><strong>GitLab URL:</strong> ${data.safe.gitlab_url}</p>
+                    <p><strong>GitLab Token:</strong> ${data.safe.gitlab_token_masked}</p>
+                    <p><strong>AI API Key:</strong> ${data.safe.openai_key_masked}</p>
+                    <p><strong>AI API Base:</strong> ${data.safe.openai_api_base}</p>
+                    <p><strong>AI Model:</strong> ${data.safe.model}</p>
+                    <p><strong>响应语言:</strong> ${data.safe.language}</p>
+                `;
+            } catch (error) {
+                console.error('加载配置失败:', error);
+            }
+        }
+
+        // 切换配置编辑模式
+        function toggleConfigEdit() {
+            const display = document.getElementById('configDisplay');
+            const edit = document.getElementById('configEdit');
+            const btn = document.getElementById('editConfigBtn');
+            
+            if (edit.classList.contains('hidden')) {
+                // 进入编辑模式
+                display.classList.add('hidden');
+                edit.classList.remove('hidden');
+                btn.textContent = '取消编辑';
+                
+                // 填充当前配置
+                document.getElementById('editGitlabUrl').value = currentConfig.gitlab_url || '';
+                document.getElementById('editGitlabToken').value = currentConfig.gitlab_token || '';
+                document.getElementById('editOpenaiKey').value = currentConfig.openai_key || '';
+                document.getElementById('editOpenaiApiBase').value = currentConfig.openai_api_base || '';
+                document.getElementById('editModel').value = currentConfig.model || '';
+                document.getElementById('editLanguage').value = currentConfig.language || '';
+            } else {
+                // 退出编辑模式
+                display.classList.remove('hidden');
+                edit.classList.add('hidden');
+                btn.textContent = '编辑配置';
+                document.getElementById('configMessage').classList.add('hidden');
+            }
+        }
+
+        // 测试连接
+        async function testConnection() {
+            const gitlab_url = document.getElementById('editGitlabUrl').value;
+            const gitlab_token = document.getElementById('editGitlabToken').value;
+            const messageDiv = document.getElementById('configMessage');
+            
+            messageDiv.classList.remove('hidden', 'bg-green-100', 'bg-red-100', 'text-green-700', 'text-red-700');
+            messageDiv.textContent = '测试中...';
+            messageDiv.classList.add('bg-blue-100', 'text-blue-700');
+            
+            try {
+                const response = await fetch('/api/config/test', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({gitlab_url, gitlab_token})
+                });
+                
+                const data = await response.json();
+                
+                messageDiv.classList.remove('bg-blue-100', 'text-blue-700');
+                if (data.success) {
+                    messageDiv.classList.add('bg-green-100', 'text-green-700');
+                    messageDiv.textContent = '✅ ' + data.message;
+                } else {
+                    messageDiv.classList.add('bg-red-100', 'text-red-700');
+                    messageDiv.textContent = '❌ ' + data.message;
+                }
+            } catch (error) {
+                messageDiv.classList.remove('bg-blue-100', 'text-blue-700');
+                messageDiv.classList.add('bg-red-100', 'text-red-700');
+                messageDiv.textContent = '❌ 测试失败: ' + error.message;
+            }
+        }
+
+        // 保存配置
+        async function saveConfig() {
+            const config = {
+                gitlab_url: document.getElementById('editGitlabUrl').value,
+                gitlab_token: document.getElementById('editGitlabToken').value,
+                openai_key: document.getElementById('editOpenaiKey').value,
+                openai_api_base: document.getElementById('editOpenaiApiBase').value,
+                model: document.getElementById('editModel').value,
+                language: document.getElementById('editLanguage').value
+            };
+            
+            const messageDiv = document.getElementById('configMessage');
+            messageDiv.classList.remove('hidden', 'bg-green-100', 'bg-red-100', 'text-green-700', 'text-red-700');
+            messageDiv.textContent = '保存中...';
+            messageDiv.classList.add('bg-blue-100', 'text-blue-700');
+            
+            try {
+                const response = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(config)
+                });
+                
+                const data = await response.json();
+                
+                messageDiv.classList.remove('bg-blue-100', 'text-blue-700');
+                if (data.success) {
+                    messageDiv.classList.add('bg-green-100', 'text-green-700');
+                    messageDiv.textContent = '✅ ' + data.message;
+                    
+                    // 重新加载配置
+                    setTimeout(() => {
+                        loadConfig();
+                        toggleConfigEdit();
+                    }, 1500);
+                } else {
+                    messageDiv.classList.add('bg-red-100', 'text-red-700');
+                    messageDiv.textContent = '❌ ' + (data.error || '保存失败');
+                }
+            } catch (error) {
+                messageDiv.classList.remove('bg-blue-100', 'text-blue-700');
+                messageDiv.classList.add('bg-red-100', 'text-red-700');
+                messageDiv.textContent = '❌ 保存失败: ' + error.message;
+            }
+        }
+
+        // 加载 MR 列表
+        async function loadMRs() {
+            const projectUrl = document.getElementById('projectUrl').value.trim();
+            const state = document.getElementById('mrState').value;
+            
+            if (!projectUrl) {
+                alert('请输入项目 URL');
+                return;
+            }
+
+            const mrList = document.getElementById('mrList');
+            mrList.innerHTML = '<p class="text-gray-500 text-center py-8">加载中...</p>';
+
+            try {
+                const response = await fetch('/api/projects/mrs', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({project_url: projectUrl, state: state})
+                });
+
+                const data = await response.json();
+                currentMRs = data.mrs || [];
+
+                // 更新标题
+                const stateNames = {
+                    'opened': 'Open',
+                    'merged': 'Merged',
+                    'closed': 'Closed',
+                    'all': 'All'
+                };
+                document.getElementById('mrTitle').textContent = `${stateNames[state]} Merge Requests`;
+
+                if (currentMRs.length === 0) {
+                    mrList.innerHTML = `<p class="text-gray-500 text-center py-8">没有找到 ${stateNames[state]} 状态的 MR</p>`;
+                    return;
+                }
+
+                document.getElementById('mrCount').textContent = `(${currentMRs.length})`;
+                
+                // 只在 Open 状态下显示批量审查按钮
+                const batchBtn = document.getElementById('batchReviewBtn');
+                if (state === 'opened') {
+                    const unreviewed = currentMRs.filter(mr => !mr.reviewed);
+                    if (unreviewed.length > 0) {
+                        batchBtn.classList.remove('hidden');
+                    } else {
+                        batchBtn.classList.add('hidden');
+                    }
+                } else {
+                    batchBtn.classList.add('hidden');
+                }
+
+                renderMRList();
+            } catch (error) {
+                console.error('加载 MR 失败:', error);
+                mrList.innerHTML = '<p class="text-red-500 text-center py-8">加载失败，请检查项目 URL 和网络连接</p>';
+            }
+        }
+
+        // 渲染 MR 列表
+        function renderMRList() {
+            const mrList = document.getElementById('mrList');
+            mrList.innerHTML = currentMRs.map(mr => {
+                // 状态标签
+                let statusBadge = '';
+                if (mr.state === 'merged') {
+                    statusBadge = '<span class="px-2 py-1 text-xs font-medium text-purple-700 bg-purple-100 rounded">已合并</span>';
+                } else if (mr.state === 'closed') {
+                    statusBadge = '<span class="px-2 py-1 text-xs font-medium text-red-700 bg-red-100 rounded">已关闭</span>';
+                } else if (mr.state === 'opened') {
+                    statusBadge = '<span class="px-2 py-1 text-xs font-medium text-blue-700 bg-blue-100 rounded">Open</span>';
+                }
+                
+                // 审查状态标签
+                let reviewBadge = '';
+                if (mr.state === 'opened') {
+                    reviewBadge = mr.reviewed ? 
+                        '<span class="px-2 py-1 text-xs font-medium text-green-700 bg-green-100 rounded">已审查</span>' :
+                        '<span class="px-2 py-1 text-xs font-medium text-yellow-700 bg-yellow-100 rounded">未审查</span>';
+                }
+                
+                return `
+                <div class="border border-gray-200 rounded-lg p-4 hover:shadow-md transition">
+                    <div class="flex justify-between items-start">
+                        <div class="flex-1">
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <span class="text-sm font-medium text-gray-500">!${mr.iid}</span>
+                                <h3 class="text-base font-medium text-gray-900">${mr.title}</h3>
+                                ${statusBadge}
+                                ${reviewBadge}
+                            </div>
+                            <p class="mt-1 text-sm text-gray-500">
+                                作者: ${mr.author.name} | 
+                                创建时间: ${new Date(mr.created_at).toLocaleString('zh-CN')}
+                            </p>
+                            <p class="mt-1 text-sm text-gray-600">
+                                ${mr.source_branch} → ${mr.target_branch}
+                            </p>
+                        </div>
+                        <div class="flex gap-2 ml-4">
+                            ${mr.state === 'opened' ? `
+                                <button 
+                                    onclick="reviewMR('${mr.web_url}', ${mr.iid})"
+                                    class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm font-medium"
+                                    id="reviewBtn-${mr.iid}"
+                                >
+                                    ${mr.reviewed ? '重新审查' : '立即审查'}
+                                </button>
+                            ` : ''}
+                            ${mr.state === 'merged' || mr.state === 'closed' ? `
+                                <button 
+                                    onclick="reviewMR('${mr.web_url}', ${mr.iid})"
+                                    class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded text-sm font-medium"
+                                    id="reviewBtn-${mr.iid}"
+                                    title="对已${mr.state === 'merged' ? '合并' : '关闭'}的 MR 进行 AI 分析"
+                                >
+                                    AI 分析
+                                </button>
+                            ` : ''}
+                            <button 
+                                onclick="toggleCommits(${mr.iid}, '${mr.web_url}')"
+                                class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded text-sm font-medium"
+                                id="commitsBtn-${mr.iid}"
+                            >
+                                查看 Commits
+                            </button>
+                            <a 
+                                href="${mr.web_url}" 
+                                target="_blank"
+                                class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-2 rounded text-sm font-medium"
+                            >
+                                查看 MR
+                            </a>
+                        </div>
+                    </div>
+                    <div id="progress-${mr.iid}" class="mt-4 hidden">
+                        <div class="w-full bg-gray-200 rounded-full h-2">
+                            <div class="bg-blue-600 h-2 rounded-full progress-bar" style="width: 0%" id="progressBar-${mr.iid}"></div>
+                        </div>
+                        <p class="mt-2 text-sm text-gray-600" id="progressText-${mr.iid}">准备中...</p>
+                    </div>
+                    
+                    <!-- Commits 列表显示区域 -->
+                    <div id="commits-${mr.iid}" class="mt-4 hidden">
+                        <div class="border-t pt-4">
+                            <div class="flex justify-between items-center mb-3">
+                                <h4 class="font-medium text-gray-900">Commits 列表</h4>
+                                <button 
+                                    onclick="toggleCommits(${mr.iid}, '${mr.web_url}')"
+                                    class="text-sm text-indigo-600 hover:text-indigo-800"
+                                >
+                                    收起
+                                </button>
+                            </div>
+                            <div id="commitsContent-${mr.iid}" class="space-y-2">
+                                <p class="text-gray-600 text-sm">加载中...</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 审查结果显示区域 -->
+                    <div id="result-${mr.iid}" class="mt-4 hidden">
+                        <div class="border-t pt-4">
+                            <div class="flex justify-between items-center mb-2">
+                                <h4 class="font-medium text-gray-900">AI 审查结果</h4>
+                                <button 
+                                    onclick="toggleResult(${mr.iid})"
+                                    class="text-sm text-indigo-600 hover:text-indigo-800"
+                                    id="toggleResultBtn-${mr.iid}"
+                                >
+                                    收起
+                                </button>
+                            </div>
+                            <div id="resultContent-${mr.iid}" class="bg-gray-50 rounded p-4 text-sm overflow-auto max-h-96">
+                                <p class="text-gray-600">加载中...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                `;
+            }).join('');
+        }
+
+        // 切换结果显示
+        function toggleResult(mrId) {
+            const content = document.getElementById('resultContent-' + mrId);
+            const btn = document.getElementById('toggleResultBtn-' + mrId);
+            
+            if (content.classList.contains('hidden')) {
+                content.classList.remove('hidden');
+                btn.textContent = '收起';
+            } else {
+                content.classList.add('hidden');
+                btn.textContent = '展开';
+            }
+        }
+
+        // 审查单个 MR
+        async function reviewMR(mrUrl, mrId) {
+            const btn = document.getElementById(`reviewBtn-${mrId}`);
+            const progress = document.getElementById(`progress-${mrId}`);
+            const progressBar = document.getElementById(`progressBar-${mrId}`);
+            const progressText = document.getElementById(`progressText-${mrId}`);
+
+            // 判断是审查还是分析
+            const isAnalysis = btn.textContent.includes('AI 分析');
+            const actionText = isAnalysis ? '分析' : '审查';
+
+            btn.disabled = true;
+            btn.textContent = `${actionText}中...`;
+            btn.classList.add('opacity-50', 'cursor-not-allowed');
+            progress.classList.remove('hidden');
+
+            try {
+                // 启动审查
+                const response = await fetch('/api/review', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({mr_url: mrUrl, mr_id: mrId.toString()})
+                });
+
+                const data = await response.json();
+
+                // 轮询状态
+                const checkStatus = setInterval(async () => {
+                    const statusResponse = await fetch(`/api/review/status/${mrId}`);
+                    const status = await statusResponse.json();
+
+                    progressBar.style.width = `${status.progress || 0}%`;
+                    progressText.textContent = status.message || '处理中...';
+
+                    if (status.status === 'success') {
+                        clearInterval(checkStatus);
+                        btn.textContent = `${actionText}完成 ✓`;
+                        btn.classList.remove('bg-blue-600', 'hover:bg-blue-700', 'bg-purple-600', 'hover:bg-purple-700');
+                        btn.classList.add('bg-green-600');
+                        progressText.textContent = `✅ ${actionText}完成！结果已显示在下方`;
+                        progressText.classList.add('text-green-600', 'font-medium');
+                        
+                        // 显示结果（使用格式化）
+                        if (status.output) {
+                            const resultDiv = document.getElementById('result-' + mrId);
+                            const resultContent = document.getElementById('resultContent-' + mrId);
+                            resultDiv.classList.remove('hidden');
+                            resultContent.innerHTML = formatReviewResult(status.output);
+                        }
+                        
+                        // 3秒后刷新列表
+                        setTimeout(() => loadMRs(), 3000);
+                    } else if (status.status === 'failed') {
+                        clearInterval(checkStatus);
+                        btn.textContent = `${actionText}失败`;
+                        btn.classList.remove('bg-blue-600', 'hover:bg-blue-700', 'bg-purple-600', 'hover:bg-purple-700');
+                        btn.classList.add('bg-red-600');
+                        progressText.textContent = '❌ ' + (status.message || `${actionText}失败`);
+                        progressText.classList.add('text-red-600');
+                        btn.disabled = false;
+                        btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                    }
+                }, 2000);
+
+            } catch (error) {
+                console.error(`${actionText}失败:`, error);
+                btn.textContent = `${actionText}失败`;
+                btn.disabled = false;
+                btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                progressText.textContent = `❌ ${actionText}失败: ` + error.message;
+                progressText.classList.add('text-red-600');
+            }
+        }
+
+        // 批量审查
+        async function batchReview() {
+            const unreviewed = currentMRs.filter(mr => !mr.reviewed);
+            if (unreviewed.length === 0) {
+                alert('没有未审查的 MR');
+                return;
+            }
+
+            if (!confirm(`确定要审查 ${unreviewed.length} 个 MR 吗？这可能需要一些时间。`)) {
+                return;
+            }
+
+            // 依次审查每个 MR
+            for (const mr of unreviewed) {
+                await reviewMR(mr.web_url, mr.iid);
+                // 等待5秒再审查下一个，避免API限流
+                await new Promise(resolve => setTimeout(resolve, 5000));
+            }
+        }
+    </script>
+</body>
+</html>
