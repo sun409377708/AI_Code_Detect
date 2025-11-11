@@ -1,6 +1,8 @@
-# PR-Agent AI 代码审查平台
+# 🚀 PR-Agent 可视化管理平台
 
-> 基于通义千问 AI 的 GitLab MR/Commit 自动审查平台
+基于 PR-Agent 的 GitLab 代码自动审查平台，提供 Web 界面管理和自动化审查功能。
+
+📖 **[完整功能说明文档](./FEATURES.md)**
 
 ## 📋 目录
 

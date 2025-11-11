@@ -24,15 +24,510 @@
     <div class="min-h-screen">
         <!-- 头部 -->
         <header class="bg-white shadow">
-            <div class="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
-                <h1 class="text-3xl font-bold text-gray-900">
-                    PR-Agent 代码审查平台
-                </h1>
-                <p class="mt-2 text-sm text-gray-600">
-                    AI 驱动的 GitLab Merge Request 自动化审查工具
-                </p>
+            <div class="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8 flex justify-between items-center">
+                <div>
+                    <h1 class="text-3xl font-bold text-gray-900">
+                        PR-Agent 代码审查平台
+                    </h1>
+                    <p class="mt-2 text-sm text-gray-600">
+                        AI 驱动的 GitLab Merge Request 自动化审查工具
+                    </p>
+                </div>
+                <div class="flex items-center gap-4">
+                    <span id="tokenStatus" class="text-sm text-gray-600"></span>
+                    <button 
+                        onclick="showWebhookDialog()" 
+                        class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-md text-sm font-medium">
+                        🔗 批量配置 Webhook
+                    </button>
+                    <button 
+                        onclick="showConfiguredProjectsDialog()" 
+                        class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium">
+                        📋 查看已配置项目
+                    </button>
+                    <button 
+                        onclick="showReviewReportDialog()" 
+                        class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium">
+                        📊 审查报表
+                    </button>
+                    <button 
+                        onclick="showTokenDialog()" 
+                        class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md text-sm font-medium">
+                        🔑 设置 Token
+                    </button>
+                </div>
             </div>
         </header>
+
+        <!-- Token 设置对话框 -->
+        <div id="tokenDialog" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+            <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+                <div class="mt-3">
+                    <h3 class="text-lg font-medium text-gray-900 mb-4">设置 GitLab Token</h3>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">
+                                GitLab Personal Access Token
+                            </label>
+                            <input 
+                                type="password" 
+                                id="gitlabToken" 
+                                placeholder="输入你的 GitLab Token"
+                                class="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 px-4 py-2 border"
+                            />
+                            <p class="mt-2 text-xs text-gray-500">
+                                Token 仅存储在你的浏览器中，不会上传到服务器
+                            </p>
+                        </div>
+                        <div class="flex gap-2">
+                            <button 
+                                onclick="saveToken()" 
+                                class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md text-sm font-medium">
+                                保存
+                            </button>
+                            <button 
+                                onclick="closeTokenDialog()" 
+                                class="flex-1 bg-gray-300 hover:bg-gray-400 text-gray-700 px-4 py-2 rounded-md text-sm font-medium">
+                                取消
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 已配置项目对话框 -->
+        <div id="configuredProjectsDialog" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+            <div class="relative top-10 mx-auto p-5 border w-4/5 max-w-4xl shadow-lg rounded-md bg-white">
+                <div class="mt-3">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-medium text-gray-900">📋 已配置自动审查的项目</h3>
+                        <button onclick="closeConfiguredProjectsDialog()" class="text-gray-400 hover:text-gray-600">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                            </svg>
+                        </button>
+                    </div>
+                    
+                    <!-- 当前全局配置状态 -->
+                    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                        <h4 class="font-medium text-gray-900 mb-2">🔧 当前全局配置</h4>
+                        <div class="grid grid-cols-2 gap-4 text-sm">
+                            <div>
+                                <span class="text-gray-600">MR 自动审查：</span>
+                                <span id="globalMrStatus" class="font-medium"></span>
+                            </div>
+                            <div>
+                                <span class="text-gray-600">Commit 自动审查：</span>
+                                <span id="globalPushStatus" class="font-medium"></span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 加载状态 -->
+                    <div id="configuredProjectsLoading" class="text-center py-8">
+                        <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+                        <p class="mt-2 text-gray-600">加载中...</p>
+                    </div>
+                    
+                    <!-- 项目列表 -->
+                    <div id="configuredProjectsList" class="hidden">
+                        <div class="mb-3 flex items-center justify-between">
+                            <div class="flex items-center gap-3">
+                                <p class="text-sm text-gray-600">
+                                    共 <span id="configuredProjectsCount" class="font-medium text-indigo-600">0</span> 个项目已配置 Webhook
+                                </p>
+                                <span id="selectedDeleteCount" class="text-sm text-gray-600 hidden">
+                                    已选择: <span class="font-medium text-red-600">0</span> 个
+                                </span>
+                            </div>
+                            <div class="flex gap-2">
+                                <button id="batchDeleteBtn" onclick="batchDeleteWebhooks()" 
+                                    class="hidden bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-sm">
+                                    🗑️ 批量删除
+                                </button>
+                                <button onclick="loadConfiguredProjects()" 
+                                    class="text-sm text-blue-600 hover:text-blue-800">
+                                    🔄 刷新
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="max-h-96 overflow-y-auto border rounded-lg">
+                            <table class="min-w-full divide-y divide-gray-200">
+                                <thead class="bg-gray-50 sticky top-0">
+                                    <tr>
+                                        <th class="px-4 py-3 text-left">
+                                            <input type="checkbox" id="selectAllConfigured" onchange="toggleSelectAllConfigured()" 
+                                                class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                        </th>
+                                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">项目</th>
+                                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">组</th>
+                                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Webhook 状态</th>
+                                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="configuredProjectsTableBody" class="bg-white divide-y divide-gray-200">
+                                    <!-- 项目列表将动态加载 -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    
+                    <!-- 空状态 -->
+                    <div id="configuredProjectsEmpty" class="hidden text-center py-8">
+                        <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"></path>
+                        </svg>
+                        <p class="mt-2 text-gray-600">还没有配置任何项目</p>
+                        <button onclick="closeConfiguredProjectsDialog(); showWebhookDialog();" 
+                            class="mt-4 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-md text-sm">
+                            🔗 去配置项目
+                        </button>
+                    </div>
+                    
+                    <div class="mt-4 flex justify-end">
+                        <button onclick="closeConfiguredProjectsDialog()" 
+                            class="bg-gray-300 hover:bg-gray-400 text-gray-700 px-6 py-2 rounded-md text-sm font-medium">
+                            关闭
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 审查报表对话框 -->
+        <div id="reviewReportDialog" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+            <div class="relative top-10 mx-auto p-5 border w-4/5 max-w-6xl shadow-lg rounded-md bg-white">
+                <div class="mt-3">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-medium text-gray-900">📊 AI 代码审查报表</h3>
+                        <button onclick="closeReviewReportDialog()" class="text-gray-400 hover:text-gray-600">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                            </svg>
+                        </button>
+                    </div>
+                    
+                    <!-- 统计概览 -->
+                    <div class="grid grid-cols-4 gap-4 mb-6">
+                        <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                            <div class="text-sm text-gray-600">总审查次数</div>
+                            <div class="text-2xl font-bold text-blue-600" id="totalReviews">-</div>
+                        </div>
+                        <div class="bg-green-50 border border-green-200 rounded-lg p-4">
+                            <div class="text-sm text-gray-600">MR 审查</div>
+                            <div class="text-2xl font-bold text-green-600" id="mrReviews">-</div>
+                        </div>
+                        <div class="bg-purple-50 border border-purple-200 rounded-lg p-4">
+                            <div class="text-sm text-gray-600">Commit 审查</div>
+                            <div class="text-2xl font-bold text-purple-600" id="commitReviews">-</div>
+                        </div>
+                        <div class="bg-orange-50 border border-orange-200 rounded-lg p-4">
+                            <div class="text-sm text-gray-600">涉及项目</div>
+                            <div class="text-2xl font-bold text-orange-600" id="projectCount">-</div>
+                        </div>
+                    </div>
+                    
+                    <!-- 筛选和刷新 -->
+                    <div class="flex items-center justify-between mb-4">
+                        <div class="flex items-center gap-4">
+                            <select id="reportTypeFilter" onchange="filterReviewReport()" 
+                                class="rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                <option value="all">全部类型</option>
+                                <option value="mr">MR 审查</option>
+                                <option value="commit">Commit 审查</option>
+                            </select>
+                            <input type="date" id="reportDateFrom" onchange="filterReviewReport()"
+                                class="rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            <span class="text-gray-500">至</span>
+                            <input type="date" id="reportDateTo" onchange="filterReviewReport()"
+                                class="rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+                        <button onclick="loadReviewReport()" 
+                            class="text-sm text-blue-600 hover:text-blue-800 border border-blue-300 rounded px-3 py-1">
+                            🔄 刷新数据
+                        </button>
+                    </div>
+                    
+                    <!-- 加载状态 -->
+                    <div id="reviewReportLoading" class="text-center py-8">
+                        <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+                        <p class="mt-2 text-gray-600">加载审查记录中...</p>
+                    </div>
+                    
+                    <!-- 审查记录列表 -->
+                    <div id="reviewReportList" class="hidden">
+                        <div class="mb-3">
+                            <p class="text-sm text-gray-600">
+                                共 <span id="reviewRecordCount" class="font-medium text-indigo-600">0</span> 条审查记录
+                            </p>
+                        </div>
+                        
+                        <div class="max-h-96 overflow-y-auto border rounded-lg">
+                            <table class="min-w-full divide-y divide-gray-200">
+                                <thead class="bg-gray-50 sticky top-0">
+                                    <tr>
+                                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">时间</th>
+                                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">类型</th>
+                                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">项目</th>
+                                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">标题</th>
+                                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="reviewReportTableBody" class="bg-white divide-y divide-gray-200">
+                                    <!-- 审查记录将动态加载 -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    
+                    <!-- 空状态 -->
+                    <div id="reviewReportEmpty" class="hidden text-center py-8">
+                        <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                        </svg>
+                        <p class="mt-2 text-gray-600">还没有审查记录</p>
+                        <p class="mt-1 text-sm text-gray-500">提交代码或创建 MR 后会自动触发审查</p>
+                    </div>
+                    
+                    <div class="mt-4 flex justify-end">
+                        <button onclick="closeReviewReportDialog()" 
+                            class="bg-gray-300 hover:bg-gray-400 text-gray-700 px-6 py-2 rounded-md text-sm font-medium">
+                            关闭
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Webhook 批量配置对话框 -->
+        <div id="webhookDialog" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+            <div class="relative top-10 mx-auto p-5 border w-4/5 max-w-4xl shadow-lg rounded-md bg-white">
+                <div class="mt-3">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-xl font-medium text-gray-900">🔗 批量配置 Webhook</h3>
+                        <button onclick="closeWebhookDialog()" class="text-gray-400 hover:text-gray-600">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                            </svg>
+                        </button>
+                    </div>
+                    
+                    <div class="space-y-6">
+                        <!-- 步骤 1: 选择组 -->
+                        <div id="step1" class="border rounded-lg p-4">
+                            <h4 class="text-lg font-medium text-gray-900 mb-3">步骤 1: 选择 GitLab 组</h4>
+                            <div class="space-y-3">
+                                <div class="flex gap-2">
+                                    <select id="groupSelect" class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 px-4 py-2 border">
+                                        <option value="">选择一个组...</option>
+                                    </select>
+                                    <button onclick="loadGroups()" class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm">
+                                        🔄 刷新
+                                    </button>
+                                    <button onclick="loadGroupProjects()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md text-sm">
+                                        加载项目
+                                    </button>
+                                </div>
+                                <div id="groupInfo" class="text-sm text-gray-600 hidden"></div>
+                            </div>
+                        </div>
+
+                        <!-- 步骤 2: 选择项目 -->
+                        <div id="step2" class="border rounded-lg p-4 hidden">
+                            <h4 class="text-lg font-medium text-gray-900 mb-3">步骤 2: 选择要配置的项目</h4>
+                            <div class="space-y-3">
+                                <div class="flex gap-2 mb-2">
+                                    <button onclick="selectAllProjects()" class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-3 py-1 rounded text-sm">
+                                        全选
+                                    </button>
+                                    <button onclick="deselectAllProjects()" class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-3 py-1 rounded text-sm">
+                                        取消全选
+                                    </button>
+                                    <span id="selectedCount" class="text-sm text-gray-600 ml-auto self-center">已选择: 0 个项目</span>
+                                </div>
+                                <div id="projectList" class="max-h-60 overflow-y-auto border rounded p-3 bg-gray-50">
+                                    <!-- 项目列表将动态加载 -->
+                                </div>
+                                
+                                <!-- 开始配置按钮 -->
+                                <div class="flex gap-2 mt-4 pt-4 border-t">
+                                    <button onclick="startBatchSetup()" 
+                                        class="flex-1 bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded-md text-base font-medium">
+                                        🚀 开始批量配置
+                                    </button>
+                                    <button onclick="closeWebhookDialog()" 
+                                        class="bg-gray-300 hover:bg-gray-400 text-gray-700 px-6 py-3 rounded-md text-base font-medium">
+                                        取消
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 步骤 3: 配置 Webhook -->
+                        <div id="step3" class="border rounded-lg p-4">
+                            <h4 class="text-lg font-medium text-gray-900 mb-3">步骤 3: Webhook 配置</h4>
+                            <div class="space-y-3">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Webhook URL</label>
+                                    <div class="flex gap-2">
+                                        <input type="text" id="webhookUrl" 
+                                            placeholder="http://your-server:8080/webhook/gitlab"
+                                            class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 px-4 py-2 border">
+                                        <button onclick="autoFillWebhookUrl()" class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-3 py-2 rounded text-sm">
+                                            自动填充
+                                        </button>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Secret Token (可选)</label>
+                                    <input type="text" id="webhookSecret" 
+                                        placeholder="输入密钥，用于验证请求来源"
+                                        class="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 px-4 py-2 border">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 步骤 4: 自动审查配置 -->
+                        <div id="step4" class="border rounded-lg p-4 hidden">
+                            <div class="flex items-center justify-between mb-3">
+                                <h4 class="text-lg font-medium text-gray-900">步骤 4: 自动审查配置（全局）</h4>
+                                <button type="button" onclick="loadAutoReviewConfig()" 
+                                    class="text-xs text-blue-600 hover:text-blue-800 border border-blue-300 rounded px-3 py-1">
+                                    🔄 刷新配置
+                                </button>
+                            </div>
+                            <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">
+                                <p class="text-sm text-gray-700">
+                                    💡 <strong>全局配置说明：</strong>
+                                </p>
+                                <ul class="text-sm text-gray-700 mt-2 ml-4 space-y-1">
+                                    <li>• 此配置是<strong>全局的</strong>，对所有已配置 Webhook 的项目生效</li>
+                                    <li>• 下方显示的是<strong>当前系统的配置状态</strong>，不是针对特定组或项目</li>
+                                    <li>• 只有<strong>配置了 Webhook 的项目</strong>才会触发自动审查</li>
+                                    <li>• 修改配置后，会影响<strong>所有已配置 Webhook 的项目</strong></li>
+                                </ul>
+                            </div>
+                            <div class="space-y-4">
+                                <!-- MR 自动审查 -->
+                                <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                                    <div class="flex items-center justify-between mb-3">
+                                        <div class="flex-1">
+                                            <h5 class="font-medium text-gray-900">🔀 MR 自动审查</h5>
+                                            <p class="text-sm text-gray-600 mt-1">创建或更新 Merge Request 时自动触发审查（所有分支）</p>
+                                        </div>
+                                        <label class="relative inline-flex items-center cursor-pointer">
+                                            <input type="checkbox" id="autoReviewMrEnabled" class="sr-only peer" onchange="updateAutoReviewConfig()">
+                                            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                                        </label>
+                                    </div>
+                                    <div id="mrReviewOptions" class="space-y-3 hidden">
+                                        <div class="bg-blue-100 border border-blue-300 rounded-lg p-3">
+                                            <p class="text-xs text-blue-800">
+                                                ℹ️ <strong>审查范围：</strong>已配置 Webhook 的项目的所有分支的 MR 都会触发审查
+                                            </p>
+                                        </div>
+                                        <div class="flex items-center gap-2">
+                                            <input type="checkbox" id="autoReviewSkipDraft" checked class="rounded">
+                                            <label class="text-sm text-gray-700">跳过 Draft/WIP MR</label>
+                                        </div>
+                                        <div>
+                                            <label class="text-sm font-medium text-gray-700">最小代码变更行数（0 = 不限制）</label>
+                                            <input type="number" id="autoReviewMinChanges" 
+                                                placeholder="0"
+                                                value="0"
+                                                class="w-full mt-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500">
+                                            <p class="text-xs text-gray-500 mt-1">
+                                                💡 小于此行数的 MR 不会触发审查
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Commit/Push 自动审查 -->
+                                <div class="bg-green-50 border border-green-200 rounded-lg p-4">
+                                    <div class="flex items-center justify-between mb-3">
+                                        <div class="flex-1">
+                                            <h5 class="font-medium text-gray-900">📝 Commit 自动审查</h5>
+                                            <p class="text-sm text-gray-600 mt-1">Push 代码时自动审查每个 Commit（所有分支）</p>
+                                        </div>
+                                        <label class="relative inline-flex items-center cursor-pointer">
+                                            <input type="checkbox" id="autoReviewPushEnabled" class="sr-only peer" onchange="updateAutoReviewConfig()">
+                                            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-green-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
+                                        </label>
+                                    </div>
+                                    <div id="pushReviewOptions" class="space-y-3 hidden">
+                                        <div class="bg-green-100 border border-green-300 rounded-lg p-3">
+                                            <p class="text-xs text-green-800">
+                                                ℹ️ <strong>审查范围：</strong>已配置 Webhook 的项目的所有分支的 Push 都会触发审查
+                                            </p>
+                                        </div>
+                                        
+                                        <!-- 新分支历史 commits 审查选项 -->
+                                        <div class="flex items-start justify-between p-3 bg-gray-50 rounded-lg border border-gray-200">
+                                            <div class="flex-1">
+                                                <label class="font-medium text-sm text-gray-900">新分支首次推送时审查所有历史 Commits</label>
+                                                <p class="text-xs text-gray-600 mt-1">
+                                                    启用：审查新分支的所有 commits<br>
+                                                    禁用：跳过新分支的历史 commits，只审查后续新增的 commits
+                                                </p>
+                                            </div>
+                                            <label class="relative inline-flex items-center cursor-pointer ml-3">
+                                                <input type="checkbox" id="autoReviewPushNewBranchAllCommits" class="sr-only peer" onchange="updateAutoReviewConfig()">
+                                                <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                                            </label>
+                                        </div>
+                                        
+                                        <div class="bg-yellow-50 border border-yellow-200 rounded p-3">
+                                            <p class="text-xs text-yellow-800">
+                                                ⚠️ <strong>注意：</strong>启用后每次 Push 都会触发审查，可能产生大量评论。请谨慎使用。
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 保存按钮 -->
+                                <div class="flex gap-2">
+                                    <button onclick="saveAutoReviewConfig()" 
+                                        class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md text-sm font-medium">
+                                        💾 保存自动审查配置
+                                    </button>
+                                    <button onclick="loadAutoReviewConfig()" 
+                                        class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-2 rounded-md text-sm">
+                                        🔄 刷新
+                                    </button>
+                                </div>
+                                
+                                <div id="autoReviewConfigMessage" class="hidden p-3 rounded-md text-sm"></div>
+                            </div>
+                        </div>
+
+                        <!-- 配置进度 -->
+                        <div id="setupProgress" class="hidden border rounded-lg p-4 bg-blue-50">
+                            <h4 class="text-lg font-medium text-gray-900 mb-3">配置进度</h4>
+                            <div class="space-y-3">
+                                <div class="w-full bg-gray-200 rounded-full h-4">
+                                    <div id="progressBar" class="bg-blue-600 h-4 rounded-full transition-all duration-300" style="width: 0%"></div>
+                                </div>
+                                <div class="text-sm text-gray-700">
+                                    <span id="progressText">准备中...</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 配置结果 -->
+                        <div id="setupResults" class="hidden border rounded-lg p-4">
+                            <h4 class="text-lg font-medium text-gray-900 mb-3">配置结果</h4>
+                            <div id="resultSummary" class="mb-3 p-3 bg-gray-50 rounded"></div>
+                            <div id="resultDetails" class="max-h-80 overflow-y-auto space-y-2">
+                                <!-- 结果详情将动态加载 -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
 
         <!-- 主内容 -->
         <main class="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
@@ -41,12 +536,27 @@
                 <div class="bg-white shadow rounded-lg p-6">
                     <h2 class="text-lg font-medium text-gray-900 mb-4">项目配置</h2>
                     <div class="space-y-4">
-                        <div class="flex gap-4">
+                        <div class="flex gap-2">
+                            <select 
+                                id="projectSelect" 
+                                class="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500"
+                                onchange="selectProject()"
+                            >
+                                <option value="">选择最近活跃的项目...</option>
+                            </select>
+                            <button 
+                                onclick="loadUserProjects()" 
+                                class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm"
+                                title="刷新项目列表">
+                                🔄 刷新
+                            </button>
+                        </div>
+                        <div class="flex gap-2">
                             <input 
                                 type="text" 
                                 id="projectUrl" 
-                                placeholder="输入项目 URL，例如: http://gitlab.it.ikang.com/ios/ikangapp"
-                                class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 px-4 py-2 border"
+                                placeholder="或手动输入项目 URL，例如: http://gitlab.it.ikang.com/ios/IKStaff" 
+                                class="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500"
                                 value="http://gitlab.it.ikang.com/ios/ikangapp"
                             >
                             <button 
@@ -57,7 +567,21 @@
                             </button>
                         </div>
                         <div class="flex gap-4 items-center">
-                            <label class="text-sm font-medium text-gray-700">MR 状态:</label>
+                            <label class="text-sm font-medium text-gray-700">目标分支:</label>
+                            <select 
+                                id="targetBranch" 
+                                class="rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 px-4 py-2 border"
+                                onchange="loadMRs()"
+                            >
+                                <option value="">全部分支</option>
+                            </select>
+                            <button 
+                                onclick="loadBranches()" 
+                                class="bg-gray-600 hover:bg-gray-700 text-white px-3 py-2 rounded-md text-sm"
+                                title="刷新分支列表">
+                                🔄
+                            </button>
+                            <label class="text-sm font-medium text-gray-700 ml-4">MR 状态:</label>
                             <select 
                                 id="mrState" 
                                 class="rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 px-4 py-2 border"
@@ -68,7 +592,15 @@
                                 <option value="closed">Closed (已关闭)</option>
                                 <option value="all">All (全部)</option>
                             </select>
-                            <span class="text-sm text-gray-500">选择要查看的 MR 状态</span>
+                            <label class="flex items-center gap-2 ml-4 text-sm text-gray-700">
+                                <input 
+                                    type="checkbox" 
+                                    id="includeCommits" 
+                                    class="rounded border-gray-300"
+                                    onchange="loadMRs()"
+                                />
+                                <span>包含未创建 MR 的 Commits</span>
+                            </label>
                         </div>
                     </div>
                 </div>
@@ -121,9 +653,11 @@
                             <label class="block text-sm font-medium text-gray-700 mb-1">GitLab URL</label>
                             <input type="text" id="editGitlabUrl" class="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 px-4 py-2 border">
                         </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">GitLab Token</label>
-                            <input type="password" id="editGitlabToken" class="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 px-4 py-2 border">
+                        <div class="bg-yellow-50 border border-yellow-200 rounded-md p-3">
+                            <p class="text-sm text-yellow-800">
+                                <strong>💡 提示：</strong>GitLab Token 已改为个人设置，请点击右上角"设置 Token"按钮配置您的个人 Token。
+                                <br>每个用户使用自己的 Token，互不影响。
+                            </p>
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">AI API Key</label>
@@ -282,7 +816,7 @@
                 
                 // 填充当前配置
                 document.getElementById('editGitlabUrl').value = currentConfig.gitlab_url || '';
-                document.getElementById('editGitlabToken').value = currentConfig.gitlab_token || '';
+                // GitLab Token 已移除，改为个人设置
                 document.getElementById('editOpenaiKey').value = currentConfig.openai_key || '';
                 document.getElementById('editOpenaiApiBase').value = currentConfig.openai_api_base || '';
                 document.getElementById('editModel').value = currentConfig.model || '';
@@ -299,7 +833,7 @@
         // 测试连接
         async function testConnection() {
             const gitlab_url = document.getElementById('editGitlabUrl').value;
-            const gitlab_token = document.getElementById('editGitlabToken').value;
+            const gitlab_token = getStoredToken(); // 使用右上角设置的个人 Token
             const messageDiv = document.getElementById('configMessage');
             
             messageDiv.classList.remove('hidden', 'bg-green-100', 'bg-red-100', 'text-green-700', 'text-red-700');
@@ -334,7 +868,7 @@
         async function saveConfig() {
             const config = {
                 gitlab_url: document.getElementById('editGitlabUrl').value,
-                gitlab_token: document.getElementById('editGitlabToken').value,
+                // gitlab_token 已移除，不再保存到服务器
                 openai_key: document.getElementById('editOpenaiKey').value,
                 openai_api_base: document.getElementById('editOpenaiApiBase').value,
                 model: document.getElementById('editModel').value,
@@ -376,14 +910,611 @@
             }
         }
 
+        // 加载用户的活跃项目
+        async function loadUserProjects() {
+            try {
+                const response = await fetch('/api/user/projects');
+                const data = await response.json();
+                
+                if (data.error) {
+                    console.error('加载项目失败:', data.error);
+                    alert('加载项目失败: ' + data.error);
+                    return;
+                }
+                
+                const projects = data.projects || [];
+                const projectSelect = document.getElementById('projectSelect');
+                
+                // 清空并重新填充
+                projectSelect.innerHTML = '<option value="">选择最近活跃的项目...</option>';
+                
+                projects.forEach(project => {
+                    const option = document.createElement('option');
+                    option.value = project.web_url;
+                    option.textContent = `${project.path_with_namespace}`;
+                    if (project.description) {
+                        option.title = project.description;
+                    }
+                    projectSelect.appendChild(option);
+                });
+                
+                console.log(`已加载 ${projects.length} 个项目`);
+            } catch (error) {
+                console.error('加载项目失败:', error);
+                alert('加载项目失败: ' + error.message);
+            }
+        }
+
+        // 选择项目
+        function selectProject() {
+            const projectSelect = document.getElementById('projectSelect');
+            const projectUrl = projectSelect.value;
+            
+            if (projectUrl) {
+                document.getElementById('projectUrl').value = projectUrl;
+                // 自动加载该项目的 MR
+                loadMRs();
+            }
+        }
+
+        // ========== Webhook 批量配置功能 ==========
+        
+        let currentGroupProjects = [];
+        
+        // 显示 Webhook 配置对话框
+        function showWebhookDialog() {
+            document.getElementById('webhookDialog').classList.remove('hidden');
+            loadGroups();
+            autoFillWebhookUrl();
+            // 不在这里加载配置，等选择项目后再加载
+        }
+        
+        // 关闭 Webhook 配置对话框
+        function closeWebhookDialog() {
+            document.getElementById('webhookDialog').classList.add('hidden');
+            // 重置状态
+            document.getElementById('step2').classList.add('hidden');
+            document.getElementById('step4').classList.add('hidden');
+            document.getElementById('setupProgress').classList.add('hidden');
+            document.getElementById('setupResults').classList.add('hidden');
+            currentGroupProjects = [];
+        }
+        
+        // 加载 GitLab 组列表
+        async function loadGroups() {
+            try {
+                const response = await fetch('/api/webhook/groups');
+                const data = await response.json();
+                
+                if (data.error) {
+                    alert('加载组列表失败: ' + data.error);
+                    return;
+                }
+                
+                const groupSelect = document.getElementById('groupSelect');
+                groupSelect.innerHTML = '<option value="">选择一个组...</option>';
+                
+                data.groups.forEach(group => {
+                    const option = document.createElement('option');
+                    option.value = group.id;
+                    option.textContent = `${group.full_path} (${group.project_count || '?'} 个项目)`;
+                    option.dataset.fullPath = group.full_path;
+                    groupSelect.appendChild(option);
+                });
+                
+                console.log(`已加载 ${data.groups.length} 个组`);
+            } catch (error) {
+                console.error('加载组列表失败:', error);
+                alert('加载组列表失败: ' + error.message);
+            }
+        }
+        
+        // 加载组内项目
+        async function loadGroupProjects() {
+            const groupSelect = document.getElementById('groupSelect');
+            const groupId = groupSelect.value;
+            
+            if (!groupId) {
+                alert('请先选择一个组');
+                return;
+            }
+            
+            const groupName = groupSelect.options[groupSelect.selectedIndex].dataset.fullPath;
+            const webhookUrl = document.getElementById('webhookUrl').value.trim();
+            
+            try {
+                // 传递 webhook_url 参数以检查配置状态
+                const url = `/api/webhook/group-projects/${groupId}${webhookUrl ? '?webhook_url=' + encodeURIComponent(webhookUrl) : ''}`;
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                if (data.error) {
+                    alert('加载项目失败: ' + data.error);
+                    return;
+                }
+                
+                currentGroupProjects = data.projects;
+                
+                // 显示步骤 2
+                document.getElementById('step2').classList.remove('hidden');
+                
+                // 渲染项目列表
+                const projectList = document.getElementById('projectList');
+                projectList.innerHTML = '';
+                
+                if (currentGroupProjects.length === 0) {
+                    projectList.innerHTML = '<p class="text-gray-500 text-center py-4">该组没有项目</p>';
+                    return;
+                }
+                
+                // 统计已配置数量
+                let configuredCount = 0;
+                
+                currentGroupProjects.forEach(project => {
+                    const div = document.createElement('div');
+                    const isConfigured = project.has_webhook;
+                    
+                    if (isConfigured) {
+                        configuredCount++;
+                        div.className = 'flex items-center gap-2 p-2 bg-green-50 rounded border border-green-200';
+                    } else {
+                        div.className = 'flex items-center gap-2 p-2 hover:bg-gray-100 rounded';
+                    }
+                    
+                    div.innerHTML = `
+                        <input type="checkbox" 
+                            id="project-${project.id}" 
+                            value="${project.id}"
+                            class="project-checkbox rounded border-gray-300"
+                            ${isConfigured ? 'disabled' : ''}
+                            onchange="updateSelectedCount()">
+                        <label for="project-${project.id}" class="flex-1 text-sm ${isConfigured ? 'text-gray-500' : 'cursor-pointer'}">
+                            ${project.path_with_namespace}
+                            ${isConfigured ? '<span class="ml-2 text-xs text-green-600">✓ 已配置</span>' : ''}
+                        </label>
+                    `;
+                    projectList.appendChild(div);
+                });
+                
+                updateSelectedCount();
+                
+                // 显示信息
+                const unconfiguredCount = currentGroupProjects.length - configuredCount;
+                document.getElementById('groupInfo').innerHTML = `
+                    已加载 ${groupName} 的 ${currentGroupProjects.length} 个项目
+                    <span class="ml-2 text-green-600">(${configuredCount} 个已配置)</span>
+                    <span class="ml-2 text-gray-600">(${unconfiguredCount} 个未配置)</span>
+                `;
+                document.getElementById('groupInfo').classList.remove('hidden');
+                
+                // 显示步骤 4 并加载配置
+                document.getElementById('step4').classList.remove('hidden');
+                loadAutoReviewConfig();
+                
+            } catch (error) {
+                console.error('加载项目失败:', error);
+                alert('加载项目失败: ' + error.message);
+            }
+        }
+        
+        // 全选项目（只选择未配置的）
+        function selectAllProjects() {
+            document.querySelectorAll('.project-checkbox:not(:disabled)').forEach(cb => {
+                cb.checked = true;
+            });
+            updateSelectedCount();
+        }
+        
+        // 取消全选
+        function deselectAllProjects() {
+            document.querySelectorAll('.project-checkbox:not(:disabled)').forEach(cb => {
+                cb.checked = false;
+            });
+            updateSelectedCount();
+        }
+        
+        // 更新已选择数量
+        function updateSelectedCount() {
+            const count = document.querySelectorAll('.project-checkbox:checked').length;
+            document.getElementById('selectedCount').textContent = `已选择: ${count} 个项目`;
+        }
+        
+        // 自动填充 Webhook URL
+        function autoFillWebhookUrl() {
+            const currentHost = window.location.hostname;
+            const currentPort = window.location.port || '8080';
+            const webhookUrl = `http://${currentHost}:${currentPort}/webhook/gitlab`;
+            document.getElementById('webhookUrl').value = webhookUrl;
+        }
+        
+        // 开始批量配置
+        async function startBatchSetup() {
+            // 获取选中的项目
+            const selectedCheckboxes = document.querySelectorAll('.project-checkbox:checked');
+            const projectIds = Array.from(selectedCheckboxes).map(cb => cb.value);
+            
+            if (projectIds.length === 0) {
+                alert('请至少选择一个项目');
+                return;
+            }
+            
+            const webhookUrl = document.getElementById('webhookUrl').value.trim();
+            const webhookSecret = document.getElementById('webhookSecret').value.trim();
+            
+            if (!webhookUrl) {
+                alert('请输入 Webhook URL');
+                return;
+            }
+            
+            if (!confirm(`确定要为 ${projectIds.length} 个项目配置 Webhook 吗？`)) {
+                return;
+            }
+            
+            // 禁用按钮，防止重复点击
+            const setupBtn = document.querySelector('button[onclick="startBatchSetup()"]');
+            const originalBtnText = setupBtn.innerHTML;
+            setupBtn.disabled = true;
+            setupBtn.innerHTML = '<span class="inline-block animate-spin mr-2">⏳</span> 配置中...';
+            setupBtn.classList.add('opacity-50', 'cursor-not-allowed');
+            
+            // 显示进度
+            document.getElementById('setupProgress').classList.remove('hidden');
+            document.getElementById('setupResults').classList.add('hidden');
+            document.getElementById('progressBar').style.width = '0%';
+            document.getElementById('progressText').textContent = '正在配置...';
+            
+            try {
+                const response = await fetch('/api/webhook/batch-setup', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        project_ids: projectIds,
+                        webhook_url: webhookUrl,
+                        webhook_secret: webhookSecret
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    alert('配置失败: ' + data.error);
+                    return;
+                }
+                
+                // 更新进度
+                document.getElementById('progressBar').style.width = '100%';
+                document.getElementById('progressText').textContent = '配置完成！';
+                
+                // 显示结果
+                displayResults(data);
+                
+            } catch (error) {
+                console.error('批量配置失败:', error);
+                alert('批量配置失败: ' + error.message);
+                document.getElementById('progressText').textContent = '配置失败';
+            } finally {
+                // 恢复按钮状态
+                setupBtn.disabled = false;
+                setupBtn.innerHTML = originalBtnText;
+                setupBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+            }
+        }
+        
+        // 显示配置结果
+        function displayResults(data) {
+            const summary = data.summary;
+            const results = data.results;
+            
+            // 显示成功提示弹窗
+            const successCount = (summary.success || 0) + (summary.updated || 0);
+            let alertIcon = '🎉';
+            let alertTitle = '配置完成！';
+            let alertMessage = '';
+            let alertClass = 'bg-green-50 border-green-500 text-green-900';
+            
+            if (successCount === summary.total) {
+                if (summary.updated > 0) {
+                    alertMessage = `所有 ${summary.total} 个项目配置完成！（新增 ${summary.success || 0} 个，更新 ${summary.updated} 个）`;
+                } else {
+                    alertMessage = `所有 ${summary.total} 个项目配置成功！`;
+                }
+            } else if (successCount > 0) {
+                alertIcon = '⚠️';
+                alertTitle = '部分配置成功';
+                const parts = [];
+                if (summary.success > 0) parts.push(`新增 ${summary.success} 个`);
+                if (summary.updated > 0) parts.push(`更新 ${summary.updated} 个`);
+                if (summary.skipped > 0) parts.push(`跳过 ${summary.skipped} 个`);
+                if (summary.error > 0) parts.push(`失败 ${summary.error} 个`);
+                alertMessage = parts.join('，');
+                alertClass = 'bg-yellow-50 border-yellow-500 text-yellow-900';
+            } else {
+                alertIcon = '❌';
+                alertTitle = '配置失败';
+                alertMessage = `所有项目配置失败，请检查权限和网络`;
+                alertClass = 'bg-red-50 border-red-500 text-red-900';
+            }
+            
+            // 显示顶部提示
+            const alertDiv = document.createElement('div');
+            alertDiv.className = `fixed top-20 left-1/2 transform -translate-x-1/2 z-50 ${alertClass} border-l-4 p-4 rounded-lg shadow-lg max-w-md animate-bounce`;
+            alertDiv.innerHTML = `
+                <div class="flex items-center">
+                    <span class="text-3xl mr-3">${alertIcon}</span>
+                    <div>
+                        <p class="font-bold text-lg">${alertTitle}</p>
+                        <p class="text-sm">${alertMessage}</p>
+                    </div>
+                    <button onclick="this.parentElement.parentElement.remove()" class="ml-4 text-2xl hover:opacity-70">×</button>
+                </div>
+            `;
+            document.body.appendChild(alertDiv);
+            
+            // 3秒后自动移除提示（但保留关闭按钮）
+            setTimeout(() => {
+                alertDiv.classList.remove('animate-bounce');
+            }, 1000);
+            
+            setTimeout(() => {
+                alertDiv.style.transition = 'opacity 0.5s';
+                alertDiv.style.opacity = '0';
+                setTimeout(() => alertDiv.remove(), 500);
+            }, 5000);
+            
+            // 显示结果区域
+            document.getElementById('setupResults').classList.remove('hidden');
+            
+            // 自动滚动到结果区域
+            document.getElementById('setupResults').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            
+            // 显示摘要
+            const summaryDiv = document.getElementById('resultSummary');
+            summaryDiv.innerHTML = `
+                <div class="grid grid-cols-5 gap-4 text-center">
+                    <div>
+                        <div class="text-2xl font-bold text-gray-700">${summary.total}</div>
+                        <div class="text-sm text-gray-500">总计</div>
+                    </div>
+                    <div>
+                        <div class="text-2xl font-bold text-green-600">${summary.success || 0}</div>
+                        <div class="text-sm text-gray-500">新增</div>
+                    </div>
+                    <div>
+                        <div class="text-2xl font-bold text-blue-600">${summary.updated || 0}</div>
+                        <div class="text-sm text-gray-500">更新</div>
+                    </div>
+                    <div>
+                        <div class="text-2xl font-bold text-yellow-600">${summary.skipped || 0}</div>
+                        <div class="text-sm text-gray-500">跳过</div>
+                    </div>
+                    <div>
+                        <div class="text-2xl font-bold text-red-600">${summary.error || 0}</div>
+                        <div class="text-sm text-gray-500">失败</div>
+                    </div>
+                </div>
+            `;
+            
+            // 显示详细结果
+            const detailsDiv = document.getElementById('resultDetails');
+            detailsDiv.innerHTML = '';
+            
+            results.forEach(result => {
+                const div = document.createElement('div');
+                div.className = 'p-3 rounded border';
+                
+                let statusIcon = '';
+                let statusClass = '';
+                
+                if (result.status === 'success') {
+                    statusIcon = '✅';
+                    statusClass = 'bg-green-50 border-green-200';
+                } else if (result.status === 'updated') {
+                    statusIcon = '🔄';
+                    statusClass = 'bg-blue-50 border-blue-200';
+                } else if (result.status === 'skipped') {
+                    statusIcon = '⏭️';
+                    statusClass = 'bg-yellow-50 border-yellow-200';
+                } else {
+                    statusIcon = '❌';
+                    statusClass = 'bg-red-50 border-red-200';
+                }
+                
+                div.className += ' ' + statusClass;
+                div.innerHTML = `
+                    <div class="flex items-start gap-2">
+                        <span class="text-lg">${statusIcon}</span>
+                        <div class="flex-1">
+                            <div class="font-medium text-sm">${result.project_name}</div>
+                            <div class="text-xs text-gray-600 mt-1">${result.message}</div>
+                        </div>
+                    </div>
+                `;
+                
+                detailsDiv.appendChild(div);
+            });
+        }
+        
+        // ========== 自动审查配置功能 ==========
+        
+        // 重置自动审查配置为默认值
+        function resetAutoReviewConfig() {
+            // MR 配置 - 默认关闭
+            document.getElementById('autoReviewMrEnabled').checked = false;
+            document.getElementById('autoReviewSkipDraft').checked = true;
+            document.getElementById('autoReviewMinChanges').value = '0';
+            
+            // Push 配置 - 默认关闭
+            document.getElementById('autoReviewPushEnabled').checked = false;
+            
+            // 隐藏选项
+            document.getElementById('mrReviewOptions').classList.add('hidden');
+            document.getElementById('pushReviewOptions').classList.add('hidden');
+            
+            console.log('自动审查配置已重置为默认值');
+        }
+        
+        // 加载自动审查配置（从服务器）
+        async function loadAutoReviewConfig() {
+            try {
+                const response = await fetch('/api/auto-review/config');
+                const data = await response.json();
+                
+                if (data.error) {
+                    console.error('加载配置失败:', data.error);
+                    return;
+                }
+                
+                // MR 配置
+                const mrEnabled = data.auto_review_enabled === 'true';
+                document.getElementById('autoReviewMrEnabled').checked = mrEnabled;
+                document.getElementById('autoReviewSkipDraft').checked = data.auto_review_skip_draft !== 'false';
+                document.getElementById('autoReviewMinChanges').value = data.auto_review_min_changes || '0';
+                
+                // Push 配置
+                const pushEnabled = data.auto_review_push_enabled === 'true';
+                document.getElementById('autoReviewPushEnabled').checked = pushEnabled;
+                document.getElementById('autoReviewPushNewBranchAllCommits').checked = data.auto_review_push_new_branch_all_commits === 'true';
+                
+                // 显示/隐藏选项
+                document.getElementById('mrReviewOptions').classList.toggle('hidden', !mrEnabled);
+                document.getElementById('pushReviewOptions').classList.toggle('hidden', !pushEnabled);
+                
+                console.log('自动审查配置已加载', { mrEnabled, pushEnabled });
+                
+                // 显示加载成功提示
+                const messageDiv = document.getElementById('autoReviewConfigMessage');
+                messageDiv.classList.remove('hidden', 'bg-red-100', 'text-red-700');
+                messageDiv.classList.add('bg-green-100', 'text-green-700');
+                messageDiv.textContent = '✅ 已加载上次保存的配置';
+                setTimeout(() => {
+                    messageDiv.classList.add('hidden');
+                }, 2000);
+            } catch (error) {
+                console.error('加载配置失败:', error);
+            }
+        }
+        
+        // 更新配置（切换开关时）
+        function updateAutoReviewConfig() {
+            const mrEnabled = document.getElementById('autoReviewMrEnabled').checked;
+            const pushEnabled = document.getElementById('autoReviewPushEnabled').checked;
+            
+            // 显示/隐藏选项
+            document.getElementById('mrReviewOptions').classList.toggle('hidden', !mrEnabled);
+            document.getElementById('pushReviewOptions').classList.toggle('hidden', !pushEnabled);
+        }
+        
+        // 保存自动审查配置
+        async function saveAutoReviewConfig() {
+            const config = {
+                auto_review_enabled: document.getElementById('autoReviewMrEnabled').checked ? 'true' : 'false',
+                auto_review_target_branches: '*',  // 所有分支
+                auto_review_skip_draft: document.getElementById('autoReviewSkipDraft').checked ? 'true' : 'false',
+                auto_review_min_changes: document.getElementById('autoReviewMinChanges').value.trim() || '0',
+                auto_review_push_enabled: document.getElementById('autoReviewPushEnabled').checked ? 'true' : 'false',
+                auto_review_push_branches: '*',  // 所有分支
+                auto_review_push_new_branch_all_commits: document.getElementById('autoReviewPushNewBranchAllCommits').checked ? 'true' : 'false'
+            };
+            
+            const messageDiv = document.getElementById('autoReviewConfigMessage');
+            messageDiv.classList.remove('hidden', 'bg-green-100', 'bg-red-100', 'text-green-700', 'text-red-700');
+            messageDiv.textContent = '保存中...';
+            messageDiv.classList.add('bg-blue-100', 'text-blue-700');
+            
+            try {
+                const response = await fetch('/api/auto-review/config', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(config)
+                });
+                
+                const data = await response.json();
+                
+                messageDiv.classList.remove('bg-blue-100', 'text-blue-700');
+                if (data.success) {
+                    messageDiv.classList.add('bg-green-100', 'text-green-700');
+                    messageDiv.textContent = '✅ ' + data.message;
+                    
+                    // 3秒后隐藏消息
+                    setTimeout(() => {
+                        messageDiv.classList.add('hidden');
+                    }, 3000);
+                } else {
+                    messageDiv.classList.add('bg-red-100', 'text-red-700');
+                    messageDiv.textContent = '❌ ' + (data.error || '保存失败');
+                }
+            } catch (error) {
+                messageDiv.classList.remove('bg-blue-100', 'text-blue-700');
+                messageDiv.classList.add('bg-red-100', 'text-red-700');
+                messageDiv.textContent = '❌ 保存失败: ' + error.message;
+            }
+        }
+        
+        // 页面加载时自动加载项目列表
+        window.addEventListener('DOMContentLoaded', () => {
+            loadUserProjects();
+        });
+
+        // 加载分支列表
+        async function loadBranches() {
+            const projectUrl = document.getElementById('projectUrl').value.trim();
+            
+            if (!projectUrl) {
+                alert('请先输入项目 URL');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/projects/branches', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({project_url: projectUrl})
+                });
+
+                const data = await response.json();
+                const branches = data.branches || [];
+                
+                const branchSelect = document.getElementById('targetBranch');
+                const currentValue = branchSelect.value;
+                
+                // 清空并重新填充
+                branchSelect.innerHTML = '<option value="">全部分支</option>';
+                
+                branches.forEach(branch => {
+                    const option = document.createElement('option');
+                    option.value = branch.name;
+                    option.textContent = branch.name;
+                    branchSelect.appendChild(option);
+                });
+                
+                // 恢复之前选择的值
+                if (currentValue && branches.find(b => b.name === currentValue)) {
+                    branchSelect.value = currentValue;
+                }
+                
+                console.log(`已加载 ${branches.length} 个分支`);
+            } catch (error) {
+                console.error('加载分支失败:', error);
+                alert('加载分支失败: ' + error.message);
+            }
+        }
+
         // 加载 MR 列表
         async function loadMRs() {
             const projectUrl = document.getElementById('projectUrl').value.trim();
             const state = document.getElementById('mrState').value;
+            const targetBranch = document.getElementById('targetBranch').value;
+            const includeCommits = document.getElementById('includeCommits').checked;
             
             if (!projectUrl) {
                 alert('请输入项目 URL');
                 return;
+            }
+
+            // 如果分支列表为空（只有"全部分支"选项），先加载分支
+            const branchSelect = document.getElementById('targetBranch');
+            if (branchSelect.options.length === 1) {
+                await loadBranches();
             }
 
             const mrList = document.getElementById('mrList');
@@ -393,7 +1524,12 @@
                 const response = await fetch('/api/projects/mrs', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({project_url: projectUrl, state: state})
+                    body: JSON.stringify({
+                        project_url: projectUrl, 
+                        state: state,
+                        target_branch: targetBranch,
+                        include_commits: includeCommits
+                    })
                 });
 
                 const data = await response.json();
@@ -438,7 +1574,50 @@
         // 渲染 MR 列表
         function renderMRList() {
             const mrList = document.getElementById('mrList');
-            mrList.innerHTML = currentMRs.map(mr => {
+            mrList.innerHTML = currentMRs.map(item => {
+                // 判断是 MR 还是 Commit
+                if (item.is_commit) {
+                    // 渲染 Commit
+                    return `
+                    <div class="border border-orange-200 rounded-lg p-4 hover:shadow-md transition bg-orange-50">
+                        <div class="flex justify-between items-start">
+                            <div class="flex-1">
+                                <div class="flex items-center gap-2 flex-wrap">
+                                    <span class="px-2 py-1 text-xs font-medium text-orange-700 bg-orange-200 rounded">📝 Commit (未创建 MR)</span>
+                                    <span class="text-sm font-medium text-gray-500">${item.short_id}</span>
+                                    <h3 class="text-base font-medium text-gray-900">${item.title}</h3>
+                                </div>
+                                <p class="mt-1 text-sm text-gray-500">
+                                    作者: ${item.author_name} | 
+                                    提交时间: ${new Date(item.created_at).toLocaleString('zh-CN')}
+                                </p>
+                                <p class="mt-1 text-sm text-gray-600">
+                                    分支: ${item.branch}
+                                </p>
+                            </div>
+                            <div class="flex gap-2 ml-4">
+                                <button 
+                                    onclick="reviewCommit('${item.web_url}', '${item.id}')"
+                                    class="bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded text-sm font-medium"
+                                    id="reviewBtn-commit-${item.short_id}"
+                                >
+                                    审查 Commit
+                                </button>
+                                <a 
+                                    href="${item.web_url}" 
+                                    target="_blank"
+                                    class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-2 rounded text-sm font-medium"
+                                >
+                                    查看 Commit
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                    `;
+                }
+                
+                // 渲染 MR
+                const mr = item;
                 // 状态标签
                 let statusBadge = '';
                 if (mr.state === 'merged') {
@@ -666,6 +1845,547 @@
                 await new Promise(resolve => setTimeout(resolve, 5000));
             }
         }
+
+        // 审查单个 Commit（从列表中点击）
+        async function reviewCommit(commitUrl, commitId) {
+            const shortId = commitId.substring(0, 8);
+            const btn = document.getElementById(`reviewBtn-commit-${shortId}`);
+            
+            if (!btn) {
+                console.error('找不到按钮');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = '审查中...';
+            btn.classList.add('opacity-50', 'cursor-not-allowed');
+
+            try {
+                const response = await fetch('/api/commit/review', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        commit_url: commitUrl,
+                        commit_id: commitId
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (data.review_id) {
+                    // 轮询审查状态
+                    const checkStatus = setInterval(async () => {
+                        const statusResponse = await fetch(`/api/commit/review/status/${data.review_id}`);
+                        const status = await statusResponse.json();
+
+                        if (status.status === 'success') {
+                            clearInterval(checkStatus);
+                            btn.textContent = '审查完成 ✓';
+                            btn.classList.remove('bg-orange-600', 'hover:bg-orange-700');
+                            btn.classList.add('bg-green-600');
+                            alert('Commit 审查完成！结果已发布到 GitLab');
+                        } else if (status.status === 'failed') {
+                            clearInterval(checkStatus);
+                            btn.textContent = '审查失败';
+                            btn.classList.remove('bg-orange-600', 'hover:bg-orange-700');
+                            btn.classList.add('bg-red-600');
+                            alert('审查失败: ' + (status.message || '未知错误'));
+                            btn.disabled = false;
+                            btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                        }
+                    }, 2000);
+                } else {
+                    throw new Error(data.error || '启动审查失败');
+                }
+            } catch (error) {
+                console.error('审查 Commit 失败:', error);
+                btn.textContent = '审查失败';
+                btn.disabled = false;
+                btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                alert('审查失败: ' + error.message);
+            }
+        }
+
+        // ========== Token 管理 ==========
+        
+        // 获取存储的 Token
+        function getStoredToken() {
+            return localStorage.getItem('gitlab_token') || '';
+        }
+
+        // 显示 Token 对话框
+        function showTokenDialog() {
+            const dialog = document.getElementById('tokenDialog');
+            const input = document.getElementById('gitlabToken');
+            input.value = getStoredToken();
+            dialog.classList.remove('hidden');
+        }
+
+        // 关闭 Token 对话框
+        function closeTokenDialog() {
+            document.getElementById('tokenDialog').classList.add('hidden');
+        }
+
+        // ========== 审查报表功能 ==========
+        
+        let allReviewRecords = []; // 存储所有审查记录
+        
+        // 显示审查报表对话框
+        function showReviewReportDialog() {
+            document.getElementById('reviewReportDialog').classList.remove('hidden');
+            // 设置默认日期范围（最近30天）
+            const today = new Date();
+            const thirtyDaysAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
+            document.getElementById('reportDateTo').valueAsDate = today;
+            document.getElementById('reportDateFrom').valueAsDate = thirtyDaysAgo;
+            loadReviewReport();
+        }
+        
+        // 关闭审查报表对话框
+        function closeReviewReportDialog() {
+            document.getElementById('reviewReportDialog').classList.add('hidden');
+        }
+        
+        // 加载审查报表（从真实API获取数据）
+        async function loadReviewReport() {
+            // 显示加载状态
+            document.getElementById('reviewReportLoading').classList.remove('hidden');
+            document.getElementById('reviewReportList').classList.add('hidden');
+            document.getElementById('reviewReportEmpty').classList.add('hidden');
+            
+            try {
+                // 获取筛选条件
+                const dateFrom = document.getElementById('reportDateFrom').value;
+                const dateTo = document.getElementById('reportDateTo').value;
+                const type = document.getElementById('reportTypeFilter').value;
+                
+                // 构建查询参数
+                const params = new URLSearchParams();
+                if (dateFrom) params.append('date_from', dateFrom);
+                if (dateTo) params.append('date_to', dateTo);
+                if (type !== 'all') params.append('type', type);
+                
+                // 调用真实 API
+                const response = await fetch(`/api/review/report?${params}`);
+                const data = await response.json();
+                
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                allReviewRecords = data.records || [];
+                
+                // 隐藏加载状态
+                document.getElementById('reviewReportLoading').classList.add('hidden');
+                
+                // 应用筛选
+                filterReviewReport();
+                
+            } catch (error) {
+                console.error('加载审查报表失败:', error);
+                document.getElementById('reviewReportLoading').classList.add('hidden');
+                alert('加载失败: ' + error.message);
+            }
+        }
+        
+        // 筛选审查报表
+        function filterReviewReport() {
+            const typeFilter = document.getElementById('reportTypeFilter').value;
+            const dateFrom = document.getElementById('reportDateFrom').valueAsDate;
+            const dateTo = document.getElementById('reportDateTo').valueAsDate;
+            
+            // 筛选记录
+            let filteredRecords = allReviewRecords.filter(record => {
+                // 类型筛选
+                if (typeFilter !== 'all' && record.type !== typeFilter) {
+                    return false;
+                }
+                
+                // 日期筛选
+                const recordDate = new Date(record.timestamp);
+                if (dateFrom && recordDate < dateFrom) {
+                    return false;
+                }
+                if (dateTo) {
+                    const endOfDay = new Date(dateTo);
+                    endOfDay.setHours(23, 59, 59, 999);
+                    if (recordDate > endOfDay) {
+                        return false;
+                    }
+                }
+                
+                return true;
+            });
+            
+            // 更新统计
+            const mrCount = filteredRecords.filter(r => r.type === 'mr').length;
+            const commitCount = filteredRecords.filter(r => r.type === 'commit').length;
+            const projects = new Set(filteredRecords.map(r => r.project));
+            
+            document.getElementById('totalReviews').textContent = filteredRecords.length;
+            document.getElementById('mrReviews').textContent = mrCount;
+            document.getElementById('commitReviews').textContent = commitCount;
+            document.getElementById('projectCount').textContent = projects.size;
+            
+            if (filteredRecords.length === 0) {
+                document.getElementById('reviewReportEmpty').classList.remove('hidden');
+                document.getElementById('reviewReportList').classList.add('hidden');
+            } else {
+                document.getElementById('reviewReportEmpty').classList.add('hidden');
+                document.getElementById('reviewReportList').classList.remove('hidden');
+                document.getElementById('reviewRecordCount').textContent = filteredRecords.length;
+                
+                // 渲染表格
+                const tbody = document.getElementById('reviewReportTableBody');
+                tbody.innerHTML = '';
+                
+                filteredRecords.forEach(record => {
+                    const tr = document.createElement('tr');
+                    tr.className = 'hover:bg-gray-50';
+                    
+                    const recordDate = new Date(record.timestamp);
+                    const timeStr = recordDate.toLocaleString('zh-CN', {
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    });
+                    
+                    const typeBadge = record.type === 'mr' 
+                        ? '<span class="px-2 py-1 text-xs font-medium rounded bg-green-100 text-green-800">MR</span>'
+                        : '<span class="px-2 py-1 text-xs font-medium rounded bg-purple-100 text-purple-800">Commit</span>';
+                    
+                    tr.innerHTML = `
+                        <td class="px-4 py-3 text-sm text-gray-600">${timeStr}</td>
+                        <td class="px-4 py-3 text-sm">${typeBadge}</td>
+                        <td class="px-4 py-3 text-sm text-gray-600">${record.project}</td>
+                        <td class="px-4 py-3 text-sm">
+                            <div class="font-medium text-gray-900">${record.title}</div>
+                            <div class="text-xs text-gray-500">作者: ${record.author}</div>
+                        </td>
+                        <td class="px-4 py-3 text-sm">
+                            <a href="${record.url}" target="_blank" 
+                                class="text-blue-600 hover:text-blue-800">
+                                🔗 查看详情
+                            </a>
+                        </td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            }
+        }
+        
+        // ========== 已配置项目功能 ==========
+        
+        // 显示已配置项目对话框
+        function showConfiguredProjectsDialog() {
+            document.getElementById('configuredProjectsDialog').classList.remove('hidden');
+            loadConfiguredProjects();
+        }
+        
+        // 关闭已配置项目对话框
+        function closeConfiguredProjectsDialog() {
+            document.getElementById('configuredProjectsDialog').classList.add('hidden');
+        }
+        
+        // 加载已配置项目列表
+        async function loadConfiguredProjects() {
+            // 显示加载状态
+            document.getElementById('configuredProjectsLoading').classList.remove('hidden');
+            document.getElementById('configuredProjectsList').classList.add('hidden');
+            document.getElementById('configuredProjectsEmpty').classList.add('hidden');
+            
+            try {
+                // 加载全局配置
+                const configResponse = await fetch('/api/auto-review/config');
+                const config = await configResponse.json();
+                
+                // 显示全局配置状态
+                const mrEnabled = config.auto_review_enabled === 'true';
+                const pushEnabled = config.auto_review_push_enabled === 'true';
+                
+                document.getElementById('globalMrStatus').textContent = mrEnabled ? '✅ 已开启' : '❌ 已关闭';
+                document.getElementById('globalMrStatus').className = mrEnabled ? 'font-medium text-green-600' : 'font-medium text-gray-500';
+                
+                document.getElementById('globalPushStatus').textContent = pushEnabled ? '✅ 已开启' : '❌ 已关闭';
+                document.getElementById('globalPushStatus').className = pushEnabled ? 'font-medium text-green-600' : 'font-medium text-gray-500';
+                
+                // 加载所有组
+                const groupsResponse = await fetch('/api/webhook/groups');
+                const groupsData = await groupsResponse.json();
+                
+                if (groupsData.error) {
+                    throw new Error(groupsData.error);
+                }
+                
+                // 获取 webhook URL 用于检查配置状态
+                const webhookUrl = `${window.location.protocol}//${window.location.host}/webhook/gitlab`;
+                
+                // 使用 Map 去重（以项目 ID 为 key）
+                const projectsMap = new Map();
+                
+                for (const group of groupsData.groups) {
+                    const projectsUrl = `/api/webhook/group-projects/${group.id}?webhook_url=${encodeURIComponent(webhookUrl)}`;
+                    const projectsResponse = await fetch(projectsUrl);
+                    const projectsData = await projectsResponse.json();
+                    
+                    if (!projectsData.error && projectsData.projects) {
+                        // 只保留已配置的项目
+                        const configured = projectsData.projects.filter(p => p.has_webhook);
+                        configured.forEach(p => {
+                            // 使用项目 ID 去重，避免同一项目在多个组中重复显示
+                            if (!projectsMap.has(p.id)) {
+                                p.group_name = group.full_path;
+                                projectsMap.set(p.id, p);
+                            }
+                        });
+                    }
+                }
+                
+                // 转换为数组
+                const configuredProjects = Array.from(projectsMap.values());
+                
+                // 隐藏加载状态
+                document.getElementById('configuredProjectsLoading').classList.add('hidden');
+                
+                if (configuredProjects.length === 0) {
+                    // 显示空状态
+                    document.getElementById('configuredProjectsEmpty').classList.remove('hidden');
+                } else {
+                    // 显示项目列表
+                    document.getElementById('configuredProjectsList').classList.remove('hidden');
+                    document.getElementById('configuredProjectsCount').textContent = configuredProjects.length;
+                    
+                    // 渲染表格
+                    const tbody = document.getElementById('configuredProjectsTableBody');
+                    tbody.innerHTML = '';
+                    
+                    configuredProjects.forEach(project => {
+                        const tr = document.createElement('tr');
+                        tr.className = 'hover:bg-gray-50';
+                        
+                        // 检查 Webhook URL 是否匹配当前服务器
+                        const currentWebhookUrl = webhookUrl;
+                        const webhookMatches = project.webhook_url === currentWebhookUrl;
+                        const webhookStatus = webhookMatches 
+                            ? '<span class="text-green-600">✅ 正常</span>'
+                            : `<span class="text-orange-600">⚠️ URL 不匹配</span><br><span class="text-xs text-gray-500">${project.webhook_url || 'Unknown'}</span>`;
+                        
+                        tr.innerHTML = `
+                            <td class="px-4 py-3">
+                                <input type="checkbox" class="project-delete-checkbox rounded border-gray-300 text-red-600 focus:ring-red-500" 
+                                    data-project-id="${project.id}" onchange="updateDeleteSelection()">
+                            </td>
+                            <td class="px-4 py-3 text-sm">
+                                <div class="font-medium text-gray-900">${project.name}</div>
+                                <div class="text-xs text-gray-500">${project.path_with_namespace}</div>
+                            </td>
+                            <td class="px-4 py-3 text-sm text-gray-600">
+                                ${project.group_name}
+                            </td>
+                            <td class="px-4 py-3 text-sm">
+                                ${webhookStatus}
+                            </td>
+                            <td class="px-4 py-3 text-sm">
+                                <a href="${project.web_url}" target="_blank" 
+                                    class="text-blue-600 hover:text-blue-800 mr-3">
+                                    🔗 打开项目
+                                </a>
+                                <a href="${project.web_url}/-/hooks" target="_blank" 
+                                    class="text-green-600 hover:text-green-800">
+                                    ⚙️ 查看 Webhook
+                                </a>
+                            </td>
+                        `;
+                        tbody.appendChild(tr);
+                    });
+                }
+                
+            } catch (error) {
+                console.error('加载已配置项目失败:', error);
+                document.getElementById('configuredProjectsLoading').classList.add('hidden');
+                alert('加载失败: ' + error.message);
+            }
+        }
+        
+        // 全选/取消全选
+        function toggleSelectAllConfigured() {
+            const selectAll = document.getElementById('selectAllConfigured');
+            const checkboxes = document.querySelectorAll('.project-delete-checkbox');
+            checkboxes.forEach(cb => cb.checked = selectAll.checked);
+            updateDeleteSelection();
+        }
+        
+        // 更新删除选择状态
+        function updateDeleteSelection() {
+            const checkboxes = document.querySelectorAll('.project-delete-checkbox');
+            const checked = Array.from(checkboxes).filter(cb => cb.checked);
+            const count = checked.length;
+            
+            // 更新选择计数显示
+            const countEl = document.getElementById('selectedDeleteCount');
+            const btnEl = document.getElementById('batchDeleteBtn');
+            
+            if (count > 0) {
+                countEl.classList.remove('hidden');
+                countEl.querySelector('.font-medium').textContent = count;
+                btnEl.classList.remove('hidden');
+            } else {
+                countEl.classList.add('hidden');
+                btnEl.classList.add('hidden');
+            }
+            
+            // 更新全选框状态
+            const selectAll = document.getElementById('selectAllConfigured');
+            selectAll.checked = count > 0 && count === checkboxes.length;
+            selectAll.indeterminate = count > 0 && count < checkboxes.length;
+        }
+        
+        // 批量删除 Webhook
+        async function batchDeleteWebhooks() {
+            const checkboxes = document.querySelectorAll('.project-delete-checkbox:checked');
+            const projectIds = Array.from(checkboxes).map(cb => parseInt(cb.dataset.projectId));
+            
+            if (projectIds.length === 0) {
+                alert('请选择要删除的项目');
+                return;
+            }
+            
+            if (!confirm(`确定要删除 ${projectIds.length} 个项目的 Webhook 配置吗？\n\n此操作不可恢复！`)) {
+                return;
+            }
+            
+            // 禁用按钮，防止重复点击
+            const deleteBtn = document.getElementById('batchDeleteBtn');
+            const originalBtnText = deleteBtn.innerHTML;
+            deleteBtn.disabled = true;
+            deleteBtn.innerHTML = '<span class="inline-block animate-spin mr-2">⏳</span> 删除中...';
+            deleteBtn.classList.add('opacity-50', 'cursor-not-allowed');
+            
+            const webhookUrl = `${window.location.protocol}//${window.location.host}/webhook/gitlab`;
+            
+            try {
+                const response = await fetch('/api/webhook/batch-delete', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        project_ids: projectIds,
+                        webhook_url: webhookUrl
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    alert('删除失败: ' + data.error);
+                    return;
+                }
+                
+                // 显示结果
+                const summary = data.summary;
+                alert(`批量删除完成！\n\n` +
+                    `✅ 成功: ${summary.success} 个\n` +
+                    `⏭️ 跳过: ${summary.skipped} 个\n` +
+                    `❌ 失败: ${summary.error} 个`);
+                
+                // 重新加载列表
+                loadConfiguredProjects();
+                
+            } catch (error) {
+                console.error('批量删除失败:', error);
+                alert('删除失败: ' + error.message);
+            } finally {
+                // 恢复按钮状态
+                deleteBtn.disabled = false;
+                deleteBtn.innerHTML = originalBtnText;
+                deleteBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+            }
+        }
+
+        // 保存 Token
+        function saveToken() {
+            const token = document.getElementById('gitlabToken').value.trim();
+            if (!token) {
+                alert('请输入 Token');
+                return;
+            }
+            localStorage.setItem('gitlab_token', token);
+            closeTokenDialog();
+            updateTokenStatus();
+            alert('Token 已保存！');
+        }
+
+        // 更新 Token 状态显示
+        async function updateTokenStatus() {
+            const token = getStoredToken();
+            const statusEl = document.getElementById('tokenStatus');
+            if (token) {
+                // 尝试获取用户信息
+                try {
+                    const response = await fetch('/api/user/info', {
+                        headers: {
+                            'X-GitLab-Token': token
+                        }
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data.success && data.user) {
+                            // 显示用户名
+                            statusEl.innerHTML = `
+                                <span class="flex items-center gap-2">
+                                    ${data.user.avatar_url ? `<img src="${data.user.avatar_url}" class="w-6 h-6 rounded-full" alt="avatar">` : ''}
+                                    <span>👤 ${data.user.name || data.user.username}</span>
+                                </span>
+                            `;
+                            statusEl.classList.remove('text-red-500');
+                            statusEl.classList.add('text-green-600');
+                            return;
+                        }
+                    }
+                    
+                    // 如果获取失败，显示 Token 已设置但可能无效
+                    statusEl.textContent = '⚠️ Token 可能无效';
+                    statusEl.classList.remove('text-green-600');
+                    statusEl.classList.add('text-yellow-600');
+                } catch (error) {
+                    console.error('获取用户信息失败:', error);
+                    // 降级显示：只显示 Token 已设置
+                    statusEl.textContent = '🔑 Token 已设置';
+                    statusEl.classList.remove('text-red-500');
+                    statusEl.classList.add('text-green-600');
+                }
+            } else {
+                statusEl.textContent = '未设置 Token';
+                statusEl.classList.remove('text-green-600', 'text-yellow-600');
+                statusEl.classList.add('text-red-500');
+            }
+        }
+
+        // 页面加载时检查 Token
+        window.addEventListener('DOMContentLoaded', () => {
+            updateTokenStatus();
+            const token = getStoredToken();
+            if (!token) {
+                // 如果没有 Token，自动弹出设置对话框
+                setTimeout(() => showTokenDialog(), 500);
+            }
+        });
+
+        // 修改所有 API 请求，添加 Token 到请求头
+        const originalFetch = window.fetch;
+        window.fetch = function(...args) {
+            const token = getStoredToken();
+            if (token) {
+                // 如果没有第二个参数（options），创建一个
+                if (!args[1]) {
+                    args[1] = {};
+                }
+                args[1].headers = args[1].headers || {};
+                args[1].headers['X-GitLab-Token'] = token;
+            }
+            return originalFetch.apply(this, args);
+        };
     </script>
 </body>
 </html>
