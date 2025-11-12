@@ -6,9 +6,9 @@
     <title>PR-Agent 代码审查平台</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="/static/app.css">
-    <script src="/static/result-formatter.js?v=17"></script>
-    <script src="/static/prompts.js?v=17"></script>
-    <script src="/static/commits.js?v=17"></script>
+    <script src="/static/result-formatter.js?v=25"></script>
+    <script src="/static/prompts.js?v=25"></script>
+    <script src="/static/commits.js?v=25"></script>
 </head>
 <body class="flex h-screen bg-gray-50 overflow-hidden">
     
@@ -59,20 +59,33 @@
                 <div class="bg-white shadow rounded-lg p-6">
                     <h2 class="text-lg font-medium text-gray-900 mb-4">项目配置</h2>
                     <div class="space-y-4">
+                        <!-- 第一级：选择组 -->
+                        <div class="flex gap-2">
+                            <select 
+                                id="groupSelect" 
+                                class="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500"
+                                onchange="selectGroup()"
+                            >
+                                <option value="">1️⃣ 选择 GitLab 组...</option>
+                            </select>
+                            <button 
+                                onclick="loadGroups()" 
+                                class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm"
+                                title="刷新组列表">
+                                🔄 刷新
+                            </button>
+                        </div>
+                        
+                        <!-- 第二级：选择组下的项目 -->
                         <div class="flex gap-2">
                             <select 
                                 id="projectSelect" 
                                 class="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500"
                                 onchange="selectProject()"
+                                disabled
                             >
-                                <option value="">选择最近活跃的项目...</option>
+                                <option value="">2️⃣ 先选择组，再选择项目...</option>
                             </select>
-                            <button 
-                                onclick="loadUserProjects()" 
-                                class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm"
-                                title="刷新项目列表">
-                                🔄 刷新
-                            </button>
                         </div>
                         <div class="flex gap-2">
                             <input 
@@ -171,20 +184,224 @@
         <!-- 审查报表页面 -->
         <div id="review-report" class="page-section">
             <div class="p-8">
-                <h2 class="text-2xl font-bold mb-6">审查报表</h2>
-                <button onclick="showReviewReportDialog()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-lg">
-                    📊 查看审查报表
-                </button>
+                <h2 class="text-2xl font-bold mb-6">📈 审查报表</h2>
+                
+                <!-- Token 未配置提示 -->
+                <div id="reportTokenWarning" class="hidden bg-yellow-50 border border-yellow-200 rounded-lg p-6 mb-6">
+                    <div class="flex items-center">
+                        <svg class="w-6 h-6 text-yellow-600 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                        </svg>
+                        <div>
+                            <h3 class="text-lg font-medium text-yellow-800">未配置 GitLab Token</h3>
+                            <p class="text-sm text-yellow-700 mt-1">请先配置 GitLab Token 才能查看审查报表</p>
+                            <button onclick="showTokenDialog()" class="mt-3 bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded text-sm">
+                                立即配置
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 报表内容 -->
+                <div id="reportContent" class="hidden">
+                    <!-- 统计概览 -->
+                    <div class="grid grid-cols-4 gap-4 mb-6">
+                        <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                            <div class="text-sm text-gray-600">总审查次数</div>
+                            <div class="text-2xl font-bold text-blue-600" id="totalReviews">-</div>
+                        </div>
+                        <div class="bg-green-50 border border-green-200 rounded-lg p-4">
+                            <div class="text-sm text-gray-600">MR 审查</div>
+                            <div class="text-2xl font-bold text-green-600" id="mrReviews">-</div>
+                        </div>
+                        <div class="bg-purple-50 border border-purple-200 rounded-lg p-4">
+                            <div class="text-sm text-gray-600">Commit 审查</div>
+                            <div class="text-2xl font-bold text-purple-600" id="commitReviews">-</div>
+                        </div>
+                        <div class="bg-orange-50 border border-orange-200 rounded-lg p-4">
+                            <div class="text-sm text-gray-600">涉及项目</div>
+                            <div class="text-2xl font-bold text-orange-600" id="projectCount">-</div>
+                        </div>
+                    </div>
+                    
+                    <!-- 筛选和刷新 -->
+                    <div class="bg-white shadow rounded-lg p-6 mb-6">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-4">
+                                <label class="text-sm font-medium text-gray-700">类型:</label>
+                                <select id="reportTypeFilter" onchange="filterReviewReport()" 
+                                    class="rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                    <option value="all">全部类型</option>
+                                    <option value="mr">MR 审查</option>
+                                    <option value="commit">Commit 审查</option>
+                                </select>
+                                <label class="text-sm font-medium text-gray-700 ml-4">时间范围:</label>
+                                <input type="date" id="reportDateFrom" onchange="filterReviewReport()"
+                                    class="rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                <span class="text-gray-500">至</span>
+                                <input type="date" id="reportDateTo" onchange="filterReviewReport()"
+                                    class="rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            </div>
+                            <button onclick="loadReviewReport()" 
+                                class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded text-sm font-medium">
+                                🔄 刷新数据
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- 加载状态 -->
+                    <div id="reviewReportLoading" class="bg-white shadow rounded-lg p-8 text-center">
+                        <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+                        <p class="mt-2 text-gray-600">加载审查记录中...</p>
+                    </div>
+                    
+                    <!-- 审查记录列表 -->
+                    <div id="reviewReportList" class="hidden bg-white shadow rounded-lg overflow-hidden">
+                        <div class="px-6 py-4 border-b border-gray-200">
+                            <p class="text-sm text-gray-600">
+                                共 <span id="reviewRecordCount" class="font-medium text-indigo-600">0</span> 条审查记录
+                            </p>
+                        </div>
+                        
+                        <div class="overflow-x-auto">
+                            <table class="min-w-full divide-y divide-gray-200">
+                                <thead class="bg-gray-50">
+                                    <tr>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">时间</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">类型</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">项目</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">标题</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="reviewReportTableBody" class="bg-white divide-y divide-gray-200">
+                                    <!-- 审查记录将动态加载 -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    
+                    <!-- 空状态 -->
+                    <div id="reviewReportEmpty" class="hidden bg-white shadow rounded-lg p-12 text-center">
+                        <svg class="mx-auto h-16 w-16 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                        </svg>
+                        <h3 class="mt-4 text-lg font-medium text-gray-900">还没有审查记录</h3>
+                        <p class="mt-2 text-sm text-gray-500">提交代码或创建 MR 后会自动触发审查</p>
+                        <div class="mt-6">
+                            <a href="#manual-review" onclick="switchPage('manual-review')" 
+                                class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700">
+                                去手动审查
+                            </a>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
         
         <!-- 已配置项目页面 -->
         <div id="configured-projects" class="page-section">
             <div class="p-8">
-                <h2 class="text-2xl font-bold mb-6">已配置项目</h2>
-                <button onclick="showConfiguredProjectsDialog()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-lg">
-                    📋 查看已配置项目
-                </button>
+                <h2 class="text-2xl font-bold mb-6">🔗 已配置项目</h2>
+                
+                <!-- Token 未配置提示 -->
+                <div id="configuredTokenWarning" class="hidden bg-yellow-50 border border-yellow-200 rounded-lg p-6 mb-6">
+                    <div class="flex items-center">
+                        <svg class="w-6 h-6 text-yellow-600 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                        </svg>
+                        <div>
+                            <h3 class="text-lg font-medium text-yellow-800">未配置 GitLab Token</h3>
+                            <p class="text-sm text-yellow-700 mt-1">请先配置 GitLab Token 才能查看已配置项目</p>
+                            <button onclick="showTokenDialog()" class="mt-3 bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded text-sm">
+                                立即配置
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 项目内容 -->
+                <div id="configuredContent" class="hidden">
+                    <!-- 当前全局配置状态 -->
+                    <div class="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6">
+                        <h3 class="text-lg font-medium text-gray-900 mb-4">🔧 当前全局配置</h3>
+                        <div class="grid grid-cols-2 gap-6">
+                            <div class="flex items-center">
+                                <span class="text-gray-700 font-medium mr-3">MR 自动审查：</span>
+                                <span id="globalMrStatus" class="text-lg"></span>
+                            </div>
+                            <div class="flex items-center">
+                                <span class="text-gray-700 font-medium mr-3">Commit 自动审查：</span>
+                                <span id="globalPushStatus" class="text-lg"></span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 加载状态 -->
+                    <div id="configuredProjectsLoading" class="bg-white shadow rounded-lg p-8 text-center">
+                        <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+                        <p class="mt-2 text-gray-600">加载中...</p>
+                    </div>
+                    
+                    <!-- 项目列表 -->
+                    <div id="configuredProjectsList" class="hidden bg-white shadow rounded-lg overflow-hidden">
+                        <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                            <div class="flex items-center gap-4">
+                                <p class="text-sm text-gray-700">
+                                    共 <span id="configuredProjectsCount" class="font-medium text-indigo-600 text-lg">0</span> 个项目已配置 Webhook
+                                </p>
+                                <span id="selectedDeleteCount" class="text-sm text-gray-600 hidden">
+                                    已选择: <span class="font-medium text-red-600">0</span> 个
+                                </span>
+                            </div>
+                            <div class="flex gap-3">
+                                <button id="batchDeleteBtn" onclick="batchDeleteWebhooks()" 
+                                    class="hidden bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded text-sm font-medium">
+                                    🗑️ 批量删除
+                                </button>
+                                <button onclick="loadConfiguredProjects()" 
+                                    class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded text-sm font-medium">
+                                    🔄 刷新
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="overflow-x-auto">
+                            <table class="min-w-full divide-y divide-gray-200">
+                                <thead class="bg-gray-50">
+                                    <tr>
+                                        <th class="px-6 py-3 text-left">
+                                            <input type="checkbox" id="selectAllConfigured" onchange="toggleSelectAllConfigured()" 
+                                                class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                        </th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">项目</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">组</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Webhook 状态</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="configuredProjectsTableBody" class="bg-white divide-y divide-gray-200">
+                                    <!-- 项目列表将动态加载 -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    
+                    <!-- 空状态 -->
+                    <div id="configuredProjectsEmpty" class="hidden bg-white shadow rounded-lg p-12 text-center">
+                        <svg class="mx-auto h-16 w-16 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"></path>
+                        </svg>
+                        <h3 class="mt-4 text-lg font-medium text-gray-900">还没有配置任何项目</h3>
+                        <p class="mt-2 text-sm text-gray-500">配置 Webhook 后，项目会自动触发 AI 代码审查</p>
+                        <div class="mt-6">
+                            <a href="#auto-review" onclick="switchPage('auto-review')" 
+                                class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-purple-600 hover:bg-purple-700">
+                                🔗 去配置 Webhook
+                            </a>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
         
@@ -604,10 +821,10 @@
                             <h4 class="text-lg font-medium text-gray-900 mb-3">步骤 1: 选择 GitLab 组</h4>
                             <div class="space-y-3">
                                 <div class="flex gap-2">
-                                    <select id="groupSelect" class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 px-4 py-2 border">
+                                    <select id="webhookGroupSelect" class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 px-4 py-2 border">
                                         <option value="">选择一个组...</option>
                                     </select>
-                                    <button onclick="loadGroups()" class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm">
+                                    <button onclick="loadWebhookGroups()" class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm">
                                         🔄 刷新
                                     </button>
                                     <button onclick="loadGroupProjects()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md text-sm">
@@ -838,8 +1055,19 @@
             
             // 根据页面加载相应内容
             if (pageId === 'manual-review') {
-                if (typeof loadUserProjects === 'function') {
-                    loadUserProjects();
+                // 加载组列表（用于两级选择）
+                if (typeof loadGroups === 'function') {
+                    loadGroups();
+                }
+            } else if (pageId === 'review-report') {
+                // 加载审查报表
+                if (typeof loadReviewReportPage === 'function') {
+                    loadReviewReportPage();
+                }
+            } else if (pageId === 'configured-projects') {
+                // 加载已配置项目
+                if (typeof loadConfiguredProjectsPage === 'function') {
+                    loadConfiguredProjectsPage();
                 }
             } else if (pageId === 'settings') {
                 if (typeof loadConfig === 'function') {
@@ -861,10 +1089,11 @@
             const hash = window.location.hash.substring(1);
             if (hash) {
                 switchPage(hash);
-            }
-            // 加载用户项目列表
-            if (typeof loadUserProjects === 'function') {
-                loadUserProjects();
+            } else {
+                // 如果没有 hash，默认显示手动审核页面，加载组列表
+                if (typeof loadGroups === 'function') {
+                    loadGroups();
+                }
             }
             // 更新 Token 状态
             if (typeof updateTokenStatus === 'function') {
@@ -881,11 +1110,33 @@
         // Token 管理已移至 token-manager.js
 
         // ========== 对话框管理 ==========
-        function showConfiguredProjectsDialog() {
-            document.getElementById('configuredProjectsDialog').classList.remove('hidden');
+        
+        // 加载已配置项目页面
+        async function loadConfiguredProjectsPage() {
+            const tokenWarning = document.getElementById('configuredTokenWarning');
+            const configuredContent = document.getElementById('configuredContent');
+            
+            // 检查是否配置了 Token
+            const token = localStorage.getItem('gitlab_token');
+            if (!token) {
+                tokenWarning.classList.remove('hidden');
+                configuredContent.classList.add('hidden');
+                return;
+            }
+            
+            // 隐藏警告，显示内容
+            tokenWarning.classList.add('hidden');
+            configuredContent.classList.remove('hidden');
+            
+            // 加载已配置项目数据
             if (typeof loadConfiguredProjects === 'function') {
                 loadConfiguredProjects();
             }
+        }
+        
+        function showConfiguredProjectsDialog() {
+            // 保留对话框函数（如果还有其他地方使用）
+            loadConfiguredProjectsPage();
         }
 
         function closeConfiguredProjectsDialog() {
@@ -1071,7 +1322,23 @@
             }
         }
 
-        function showReviewReportDialog() {
+        // 加载审查报表页面
+        async function loadReviewReportPage() {
+            const tokenWarning = document.getElementById('reportTokenWarning');
+            const reportContent = document.getElementById('reportContent');
+            
+            // 检查是否配置了 Token
+            const token = localStorage.getItem('gitlab_token');
+            if (!token) {
+                tokenWarning.classList.remove('hidden');
+                reportContent.classList.add('hidden');
+                return;
+            }
+            
+            // 隐藏警告，显示内容
+            tokenWarning.classList.add('hidden');
+            reportContent.classList.remove('hidden');
+            
             // 设置默认日期范围：今天 和 30天前
             const today = new Date();
             const thirtyDaysAgo = new Date();
@@ -1088,10 +1355,15 @@
             document.getElementById('reportDateFrom').value = formatDate(thirtyDaysAgo);
             document.getElementById('reportDateTo').value = formatDate(today);
             
-            document.getElementById('reviewReportDialog').classList.remove('hidden');
+            // 加载报表数据
             if (typeof loadReviewReport === 'function') {
                 loadReviewReport();
             }
+        }
+
+        function showReviewReportDialog() {
+            // 保留对话框函数（如果还有其他地方使用）
+            loadReviewReportPage();
         }
 
         function closeReviewReportDialog() {
@@ -1180,7 +1452,16 @@
                 }).join('');
                 
                 loading.classList.add('hidden');
-                list.classList.remove('hidden');
+                
+                // 显示列表或空状态
+                const emptyState = document.getElementById('reviewReportEmpty');
+                if (records.length === 0) {
+                    list.classList.add('hidden');
+                    emptyState.classList.remove('hidden');
+                } else {
+                    list.classList.remove('hidden');
+                    emptyState.classList.add('hidden');
+                }
                 
             } catch (error) {
                 console.error('加载审查报表失败:', error);
@@ -1482,11 +1763,11 @@
     </script>
     
     <!-- 引入模块化的 JS 文件 -->
-    <script src="/static/token-manager.js?v=15"></script>
-    <script src="/static/webhook-config.js?v=15"></script>
-    <script src="/static/auto-review-config.js?v=15"></script>
-    <script src="/static/manual-review.js?v=15"></script>
-    <script src="/static/system-config.js?v=15"></script>
+    <script src="/static/token-manager.js?v=25"></script>
+    <script src="/static/webhook-config.js?v=25"></script>
+    <script src="/static/auto-review-config.js?v=25"></script>
+    <script src="/static/manual-review.js?v=25"></script>
+    <script src="/static/system-config.js?v=25"></script>
     
     <!-- 调试：验证函数是否加载 -->
     <script>

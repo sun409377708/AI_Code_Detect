@@ -7,8 +7,30 @@ window.currentGroupProjects = [];
 
 // 显示 Webhook 配置对话框
 window.showWebhookDialog = function() {
+    // 先重置对话框状态
+    document.getElementById('step2').classList.add('hidden');
+    document.getElementById('step4').classList.add('hidden');
+    document.getElementById('setupProgress').classList.add('hidden');
+    document.getElementById('setupResults').classList.add('hidden');
+    window.currentGroupProjects = [];
+    
+    // 重置选择框
+    const groupSelect = document.getElementById('webhookGroupSelect');
+    if (groupSelect) {
+        groupSelect.selectedIndex = 0;
+    }
+    
+    // 清空项目列表
+    const projectList = document.getElementById('projectList');
+    if (projectList) {
+        projectList.innerHTML = '';
+    }
+    
+    // 显示对话框
     document.getElementById('webhookDialog').classList.remove('hidden');
-    window.loadGroups();
+    
+    // 加载组列表和自动填充 URL
+    window.loadWebhookGroups();
     window.autoFillWebhookUrl();
 }
 
@@ -23,18 +45,25 @@ window.closeWebhookDialog = function() {
     window.currentGroupProjects = [];
 }
 
-// 加载 GitLab 组列表
-window.loadGroups = async function() {
+// 加载 GitLab 组列表（用于 Webhook 配置）
+window.loadWebhookGroups = async function() {
+    console.log('🔄 开始加载 Webhook 组列表...');
     try {
         const response = await fetch('/api/webhook/groups');
         const data = await response.json();
         
         if (data.error) {
+            console.error('❌ 加载组列表失败:', data.error);
             alert('加载组列表失败: ' + data.error);
             return;
         }
         
-        const groupSelect = document.getElementById('groupSelect');
+        const groupSelect = document.getElementById('webhookGroupSelect');
+        if (!groupSelect) {
+            console.error('❌ 找不到 webhookGroupSelect 元素');
+            return;
+        }
+        
         groupSelect.innerHTML = '<option value="">选择一个组...</option>';
         
         data.groups.forEach(group => {
@@ -45,16 +74,16 @@ window.loadGroups = async function() {
             groupSelect.appendChild(option);
         });
         
-        console.log(`已加载 ${data.groups.length} 个组`);
+        console.log(`✅ 已加载 ${data.groups.length} 个 Webhook 组`);
     } catch (error) {
-        console.error('加载组列表失败:', error);
+        console.error('❌ 加载组列表失败:', error);
         alert('加载组列表失败: ' + error.message);
     }
 }
 
 // 加载组内项目
 window.loadGroupProjects = async function() {
-    const groupSelect = document.getElementById('groupSelect');
+    const groupSelect = document.getElementById('webhookGroupSelect');
     const groupId = groupSelect.value;
     
     if (!groupId) {

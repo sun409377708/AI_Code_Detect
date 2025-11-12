@@ -5,8 +5,102 @@
 
 // 全局变量
 window.currentMRs = window.currentMRs || [];
+window.currentGroups = window.currentGroups || [];
 
-// 加载用户的活跃项目
+// 加载 GitLab 组列表
+window.loadGroups = async function() {
+    console.log('🔄 开始加载 GitLab 组...');
+    try {
+        const response = await fetch('/api/user/groups');
+        console.log('📡 API 响应状态:', response.status);
+        
+        const data = await response.json();
+        console.log('📦 API 返回数据:', data);
+        
+        if (data.error) {
+            console.error('❌ 加载组失败:', data.error);
+            alert('加载组失败: ' + data.error);
+            return;
+        }
+        
+        const groups = data.groups || [];
+        window.currentGroups = groups;
+        const groupSelect = document.getElementById('groupSelect');
+        
+        if (!groupSelect) {
+            console.error('❌ 找不到 groupSelect 元素');
+            return;
+        }
+        
+        // 清空并重新填充
+        groupSelect.innerHTML = '<option value="">1️⃣ 选择 GitLab 组...</option>';
+        
+        groups.forEach(group => {
+            const option = document.createElement('option');
+            option.value = group.id;
+            option.textContent = `${group.full_path} (${group.name})`;
+            if (group.description) {
+                option.title = group.description;
+            }
+            groupSelect.appendChild(option);
+        });
+        
+        console.log(`✅ 已加载 ${groups.length} 个组`);
+    } catch (error) {
+        console.error('❌ 加载组失败:', error);
+        alert('加载组失败: ' + error.message);
+    }
+};
+
+// 选择组后加载该组下的项目
+window.selectGroup = async function() {
+    const groupSelect = document.getElementById('groupSelect');
+    const projectSelect = document.getElementById('projectSelect');
+    const groupId = groupSelect.value;
+    
+    if (!groupId) {
+        // 清空项目列表
+        projectSelect.innerHTML = '<option value="">2️⃣ 先选择组，再选择项目...</option>';
+        projectSelect.disabled = true;
+        return;
+    }
+    
+    console.log('🔄 加载组下的项目，组 ID:', groupId);
+    
+    try {
+        const response = await fetch(`/api/group/${groupId}/projects`);
+        const data = await response.json();
+        
+        if (data.error) {
+            console.error('❌ 加载项目失败:', data.error);
+            alert('加载项目失败: ' + data.error);
+            return;
+        }
+        
+        const projects = data.projects || [];
+        
+        // 清空并重新填充
+        projectSelect.innerHTML = '<option value="">2️⃣ 选择项目...</option>';
+        projectSelect.disabled = false;
+        
+        projects.forEach(project => {
+            const option = document.createElement('option');
+            option.value = project.web_url;
+            option.textContent = `${project.name}`;
+            if (project.description) {
+                option.title = project.description;
+            }
+            projectSelect.appendChild(option);
+        });
+        
+        console.log(`✅ 已加载 ${projects.length} 个项目`);
+    } catch (error) {
+        console.error('❌ 加载项目失败:', error);
+        alert('加载项目失败: ' + error.message);
+    }
+};
+
+// 加载用户的活跃项目（保留原有功能）
 window.loadUserProjects = async function() {
     console.log('🔄 开始加载用户项目...');
     try {
@@ -51,13 +145,14 @@ window.loadUserProjects = async function() {
 }
 
 // 选择项目
-window.selectProject = function() {
+window.selectProject = async function() {
     const projectSelect = document.getElementById('projectSelect');
     const projectUrl = projectSelect.value;
     
     if (projectUrl) {
         document.getElementById('projectUrl').value = projectUrl;
-        // 自动加载该项目的 MR
+        // 先加载分支列表，再加载 MR
+        await window.loadBranches();
         window.loadMRs();
     }
 }

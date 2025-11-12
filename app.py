@@ -311,6 +311,79 @@ def get_user_projects():
         print(f"获取用户项目失败: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/user/groups', methods=['GET'])
+def get_user_groups():
+    """获取用户的 GitLab 组列表"""
+    try:
+        gitlab_url = get_gitlab_url()
+        headers = {'PRIVATE-TOKEN': get_gitlab_token()}
+        
+        # 获取用户的组
+        api_url = f"{gitlab_url}/api/v4/groups"
+        params = {
+            'per_page': 100,  # 每页100个
+            'order_by': 'name',  # 按名称排序
+            'sort': 'asc'  # 升序
+        }
+        
+        response = requests.get(api_url, headers=headers, params=params)
+        response.raise_for_status()
+        
+        groups = response.json()
+        
+        # 简化组信息
+        simplified_groups = []
+        for group in groups:
+            simplified_groups.append({
+                'id': group['id'],
+                'name': group['name'],
+                'full_path': group['full_path'],
+                'description': group.get('description', '')[:100] if group.get('description') else '',
+                'web_url': group.get('web_url', '')
+            })
+        
+        return jsonify({'groups': simplified_groups})
+    except Exception as e:
+        print(f"获取用户组失败: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/group/<int:group_id>/projects', methods=['GET'])
+def get_group_projects(group_id):
+    """获取指定组下的项目列表"""
+    try:
+        gitlab_url = get_gitlab_url()
+        headers = {'PRIVATE-TOKEN': get_gitlab_token()}
+        
+        # 获取组下的项目
+        api_url = f"{gitlab_url}/api/v4/groups/{group_id}/projects"
+        params = {
+            'per_page': 100,  # 每页100个
+            'order_by': 'name',  # 按名称排序
+            'sort': 'asc',  # 升序
+            'archived': 'false'  # 排除已归档的项目
+        }
+        
+        response = requests.get(api_url, headers=headers, params=params)
+        response.raise_for_status()
+        
+        projects = response.json()
+        
+        # 简化项目信息
+        simplified_projects = []
+        for project in projects:
+            simplified_projects.append({
+                'id': project['id'],
+                'name': project['name'],
+                'path_with_namespace': project['path_with_namespace'],
+                'web_url': project['web_url'],
+                'description': project.get('description', '')[:100] if project.get('description') else ''
+            })
+        
+        return jsonify({'projects': simplified_projects})
+    except Exception as e:
+        print(f"获取组项目失败: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/projects/branches', methods=['POST'])
 def get_branches():
     """获取项目的分支列表"""
@@ -968,7 +1041,7 @@ def get_gitlab_groups():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/webhook/group-projects/<group_id>', methods=['GET'])
-def get_group_projects(group_id):
+def get_webhook_group_projects(group_id):
     """获取组内的所有项目，并检查 Webhook 配置状态"""
     try:
         gitlab_url = get_gitlab_url()
