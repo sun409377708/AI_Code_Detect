@@ -31,3 +31,11 @@ prompts.json
 # 临时文件
 *.tmp
 *.bak
+
+# 数据库文件
+*.db
+*.sqlite
+*.sqlite3
+
+# 备份文件夹
+backup_old_versions/

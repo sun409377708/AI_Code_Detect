@@ -1,7 +1,15 @@
 // Commit 审查功能
+console.log('📦 commits.js v13 已加载 - 带调试信息');
+
+// HTML 转义函数
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
 
 // 切换 Commits 列表显示
-async function toggleCommits(mrId, mrUrl) {
+window.toggleCommits = async function(mrId, mrUrl) {
     const commitsDiv = document.getElementById('commits-' + mrId);
     const commitsContent = document.getElementById('commitsContent-' + mrId);
     
@@ -38,12 +46,34 @@ async function toggleCommits(mrId, mrUrl) {
 function renderCommits(mrId, commits) {
     const commitsContent = document.getElementById('commitsContent-' + mrId);
     
-    const html = commits.map(commit => `
+    console.log('🔍 renderCommits 收到的数据:', commits);
+    
+    const html = commits.map(commit => {
+        console.log('🔍 处理 commit:', commit);
+        console.log('🔍 commit.short_id:', commit.short_id);
+        console.log('🔍 commit.id:', commit.id);
+        
+        // 确保 short_id 存在，如果不存在则使用 id 的前 8 位
+        let shortId = commit.short_id;
+        if (!shortId && commit.id) {
+            shortId = commit.id.substring(0, 8);
+            console.log('⚠️ 使用 commit.id 的前 8 位作为 shortId:', shortId);
+        }
+        
+        if (!shortId) {
+            console.error('❌ 无法生成 shortId，commit 数据:', commit);
+            shortId = 'unknown-' + Math.random().toString(36).substr(2, 9);
+            console.log('⚠️ 使用随机 ID:', shortId);
+        }
+        
+        console.log('✅ 最终使用的 shortId:', shortId);
+        
+        return `
         <div class="border border-gray-200 rounded p-3 bg-white hover:shadow-sm transition">
             <div class="flex justify-between items-start">
                 <div class="flex-1">
                     <div class="flex items-center gap-2">
-                        <span class="font-mono text-xs bg-gray-100 px-2 py-1 rounded">${commit.short_id}</span>
+                        <span class="font-mono text-xs bg-gray-100 px-2 py-1 rounded">${shortId}</span>
                         <span class="text-sm font-medium text-gray-900">${escapeHtml(commit.title)}</span>
                     </div>
                     <p class="text-xs text-gray-500 mt-1">
@@ -52,11 +82,13 @@ function renderCommits(mrId, commits) {
                 </div>
                 <div class="flex gap-2 ml-4">
                     <button 
-                        onclick="reviewCommit('${commit.web_url}', '${commit.id}', '${commit.short_id}')"
+                        onclick="console.log('点击审查按钮, shortId:', '${shortId}'); window.reviewCommit('${commit.web_url}', '${commit.id}', '${shortId}');"
                         class="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-xs font-medium"
-                        id="commitReviewBtn-${commit.short_id}"
+                        id="commitReviewBtn-${shortId}"
+                        data-short-id="${shortId}"
+                        data-commit-id="${commit.id}"
                     >
-                        AI 审查
+                        AI 审查 [${shortId}]
                     </button>
                     <a 
                         href="${commit.web_url}" 
@@ -69,43 +101,54 @@ function renderCommits(mrId, commits) {
             </div>
             
             <!-- Commit 审查进度 -->
-            <div id="commitProgress-${commit.short_id}" class="mt-3 hidden">
+            <div id="commitProgress-${shortId}" class="mt-3 hidden">
                 <div class="w-full bg-gray-200 rounded-full h-1.5">
-                    <div class="bg-green-600 h-1.5 rounded-full" style="width: 0%" id="commitProgressBar-${commit.short_id}"></div>
+                    <div class="bg-green-600 h-1.5 rounded-full" style="width: 0%" id="commitProgressBar-${shortId}"></div>
                 </div>
-                <p class="mt-1 text-xs text-gray-600" id="commitProgressText-${commit.short_id}">准备中...</p>
+                <p class="mt-1 text-xs text-gray-600" id="commitProgressText-${shortId}">准备中...</p>
             </div>
             
             <!-- Commit 审查结果 -->
-            <div id="commitResult-${commit.short_id}" class="mt-3 hidden">
+            <div id="commitResult-${shortId}" class="mt-3 hidden">
                 <div class="border-t pt-2">
                     <div class="flex justify-between items-center mb-1">
                         <span class="text-xs font-medium text-gray-700">AI 审查结果</span>
                         <button 
-                            onclick="toggleCommitResult('${commit.short_id}')"
+                            onclick="window.toggleCommitResult('${shortId}')"
                             class="text-xs text-indigo-600 hover:text-indigo-800"
-                            id="toggleCommitResultBtn-${commit.short_id}"
+                            id="toggleCommitResultBtn-${shortId}"
                         >
                             收起
                         </button>
                     </div>
-                    <div id="commitResultContent-${commit.short_id}" class="bg-gray-50 rounded p-2 text-xs overflow-auto max-h-64">
+                    <div id="commitResultContent-${shortId}" class="bg-gray-50 rounded p-2 text-xs overflow-auto max-h-64">
                         <p class="text-gray-600">加载中...</p>
                     </div>
                 </div>
             </div>
         </div>
-    `).join('');
+    `;
+    }).join('');
     
     commitsContent.innerHTML = html;
 }
 
 // 审查单个 Commit
-async function reviewCommit(commitUrl, commitId, shortId) {
+window.reviewCommit = async function(commitUrl, commitId, shortId) {
+    console.log('🔍 reviewCommit 被调用:', {commitUrl, commitId, shortId});
+    
     const btn = document.getElementById('commitReviewBtn-' + shortId);
     const progress = document.getElementById('commitProgress-' + shortId);
     const progressBar = document.getElementById('commitProgressBar-' + shortId);
     const progressText = document.getElementById('commitProgressText-' + shortId);
+    
+    console.log('🔍 元素查找结果:', {btn, progress, progressBar, progressText});
+    
+    if (!btn) {
+        console.error('❌ 找不到按钮元素:', 'commitReviewBtn-' + shortId);
+        alert('错误：找不到审查按钮');
+        return;
+    }
     
     btn.disabled = true;
     btn.textContent = '审查中...';
@@ -169,7 +212,7 @@ async function reviewCommit(commitUrl, commitId, shortId) {
 }
 
 // 切换 Commit 结果显示
-function toggleCommitResult(shortId) {
+window.toggleCommitResult = function(shortId) {
     const content = document.getElementById('commitResultContent-' + shortId);
     const btn = document.getElementById('toggleCommitResultBtn-' + shortId);
     

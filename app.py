@@ -148,8 +148,20 @@ def check_if_reviewed(mr_url):
     """检查 MR 是否已被 AI 审查"""
     try:
         # 从 URL 提取项目和 MR ID
+        # 例如: http://gitlab.it.ikang.com/ios/ikangapp/-/merge_requests/8
         parts = mr_url.split('/')
-        project_path = '/'.join(parts[3:-2])
+        
+        # 找到 merge_requests 的位置
+        mr_index = parts.index('merge_requests') if 'merge_requests' in parts else -1
+        if mr_index == -1:
+            return False
+        
+        # 项目路径是 merge_requests 前面的部分（排除 '-'）
+        project_parts = parts[3:mr_index]
+        if project_parts and project_parts[-1] == '-':
+            project_parts = project_parts[:-1]
+        project_path = '/'.join(project_parts)
+        
         mr_iid = parts[-1]
         
         gitlab_url = get_gitlab_url()
@@ -1354,6 +1366,115 @@ def get_auto_review_config():
             'auto_review_push_new_branch_all_commits': config.get('AUTO_REVIEW_PUSH_NEW_BRANCH_ALL_COMMITS', 'false')
         })
     except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/webhook/configured-projects', methods=['GET'])
+def get_configured_projects():
+    """获取所有已配置 Webhook 的项目"""
+    try:
+        gitlab_url = get_gitlab_url()
+        headers = {'PRIVATE-TOKEN': get_gitlab_token()}
+        webhook_url = request.args.get('webhook_url', '')
+        match_mode = request.args.get('match_mode', 'exact')  # exact: 精确匹配, contains: 包含匹配, all: 所有webhook
+        
+        # 获取用户所有可访问的项目
+        projects_url = f"{gitlab_url}/api/v4/projects"
+        params = {
+            'membership': 'true',
+            'per_page': 100,
+            'simple': 'true',
+            'order_by': 'last_activity_at'
+        }
+        
+        all_projects = []
+        page = 1
+        while True:
+            params['page'] = page
+            response = requests.get(projects_url, headers=headers, params=params)
+            response.raise_for_status()
+            projects = response.json()
+            
+            if not projects:
+                break
+            
+            all_projects.extend(projects)
+            page += 1
+            
+            # 限制最多获取 500 个项目
+            if len(all_projects) >= 500:
+                break
+        
+        # 检查每个项目的 Webhook 配置
+        configured_projects = []
+        for project in all_projects:
+            project_id = project['id']
+            
+            # 获取项目的 Webhooks
+            hooks_url = f"{gitlab_url}/api/v4/projects/{project_id}/hooks"
+            try:
+                hooks_response = requests.get(hooks_url, headers=headers, timeout=5)
+                if hooks_response.status_code == 200:
+                    hooks = hooks_response.json()
+                    
+                    # 查找匹配的 Webhook
+                    for hook in hooks:
+                        should_add = False
+                        hook_url = hook.get('url', '')
+                        
+                        if match_mode == 'all':
+                            # 显示所有配置了 webhook 的项目
+                            should_add = True
+                        elif match_mode == 'contains' and webhook_url:
+                            # 包含匹配：只要路径部分匹配即可（忽略主机名和端口）
+                            # 提取路径部分，例如从 http://localhost:8080/webhook/gitlab 提取 /webhook/gitlab
+                            try:
+                                # 分割 URL，获取路径部分
+                                if '://' in webhook_url:
+                                    webhook_path = '/' + webhook_url.split('://')[-1].split('/', 1)[1]
+                                else:
+                                    webhook_path = webhook_url
+                                
+                                if '://' in hook_url:
+                                    hook_path = '/' + hook_url.split('://')[-1].split('/', 1)[1]
+                                else:
+                                    hook_path = hook_url
+                                
+                                # 检查路径是否匹配
+                                should_add = webhook_path == hook_path
+                            except:
+                                # 如果解析失败，使用简单的包含匹配
+                                should_add = '/webhook/gitlab' in hook_url
+                        elif match_mode == 'exact' and webhook_url:
+                            # 精确匹配
+                            should_add = hook_url == webhook_url
+                        elif not webhook_url:
+                            # 如果没有指定 webhook_url，返回所有配置了 webhook 的项目
+                            should_add = True
+                        
+                        if should_add:
+                            configured_projects.append({
+                                'id': project['id'],
+                                'name': project['name'],
+                                'path_with_namespace': project['path_with_namespace'],
+                                'web_url': project['web_url'],
+                                'namespace': project.get('namespace', {}).get('full_path', ''),
+                                'hook_id': hook['id'],
+                                'hook_url': hook['url'],
+                                'push_events': hook.get('push_events', False),
+                                'merge_requests_events': hook.get('merge_requests_events', False)
+                            })
+                            break  # 每个项目只添加一次
+            except Exception as e:
+                print(f"检查项目 {project_id} 的 Webhook 失败: {e}")
+                continue
+        
+        return jsonify({
+            'projects': configured_projects,
+            'total': len(configured_projects)
+        })
+        
+    except Exception as e:
+        print(f"获取已配置项目失败: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/auto-review/config', methods=['POST'])
