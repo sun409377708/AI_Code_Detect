@@ -1,0 +1,121 @@
+/**
+ * PR-Agent 主题样式
+ * 主题色：橙色 (#F97316, #EA580C, #C2410C)
+ */
+
+/* 动画 */
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.spinner {
+    animation: spin 1s linear infinite;
+}
+
+.progress-bar {
+    transition: width 0.3s ease;
+}
+
+/* 左侧菜单样式 */
+.menu-item {
+    display: block;
+    padding: 12px 20px;
+    color: #6B7280;
+    text-decoration: none;
+    transition: all 0.2s;
+    border-left: 3px solid transparent;
+}
+
+.menu-item:hover {
+    background: #FFF7ED; /* orange-50 */
+    color: #F97316; /* orange-500 */
+}
+
+.menu-item.active {
+    background: #FFEDD5; /* orange-100 */
+    color: #EA580C; /* orange-600 */
+    border-left-color: #F97316; /* orange-500 */
+    font-weight: 600;
+}
+
+/* 页面切换 */
+.page-section {
+    display: none;
+}
+
+.page-section.active {
+    display: block;
+}
+
+/* 主题色覆盖 - 橙色主题 */
+.bg-indigo-600 {
+    background-color: #F97316 !important; /* orange-500 */
+}
+
+.bg-indigo-700 {
+    background-color: #EA580C !important; /* orange-600 */
+}
+
+.hover\:bg-indigo-700:hover {
+    background-color: #EA580C !important; /* orange-600 */
+}
+
+.text-indigo-600 {
+    color: #F97316 !important; /* orange-500 */
+}
+
+.text-indigo-700 {
+    color: #EA580C !important; /* orange-600 */
+}
+
+.border-indigo-500 {
+    border-color: #F97316 !important; /* orange-500 */
+}
+
+.focus\:border-indigo-500:focus {
+    border-color: #F97316 !important; /* orange-500 */
+}
+
+.focus\:ring-indigo-500:focus {
+    --tw-ring-color: #F97316 !important; /* orange-500 */
+}
+
+.ring-indigo-500 {
+    --tw-ring-color: #F97316 !important; /* orange-500 */
+}
+
+/* Logo 颜色 */
+h1.text-indigo-600 {
+    color: #F97316 !important; /* orange-500 */
+}
+
+/* 按钮悬停效果优化 */
+button.bg-indigo-600:hover,
+button.hover\:bg-indigo-700:hover {
+    background-color: #EA580C !important; /* orange-600 */
+    transform: translateY(-1px);
+    box-shadow: 0 4px 6px -1px rgba(249, 115, 22, 0.3);
+}
+
+/* 链接颜色 */
+a.text-blue-600 {
+    color: #F97316 !important; /* orange-500 */
+}
+
+a.hover\:text-blue-800:hover {
+    color: #C2410C !important; /* orange-700 */
+}
+
+/* 加载动画颜色 */
+.border-indigo-600 {
+    border-color: #F97316 !important; /* orange-500 */
+}
+
+/* 统计卡片强调色 */
+.text-indigo-600 {
+    color: #F97316 !important; /* orange-500 */
+}
+
+.font-medium.text-indigo-600 {
+    color: #F97316 !important; /* orange-500 */
+}
