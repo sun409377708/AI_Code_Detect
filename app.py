@@ -29,7 +29,14 @@ CORS(app, resources={
     r"/api/*": {
         "origins": "*",  # 允许所有来源，生产环境建议指定具体域名
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization", "PRIVATE-TOKEN"],
+        "allow_headers": [
+            "Content-Type", 
+            "Authorization", 
+            "PRIVATE-TOKEN",
+            "X-GitLab-Token",      # 用户 Token（前端传递）
+            "X-Gitlab-Token",      # Webhook 验证 Token
+            "X-Gitlab-Event"       # Webhook 事件类型
+        ],
         "expose_headers": ["Content-Type"],
         "supports_credentials": True
     }
@@ -735,6 +742,11 @@ def get_prompts():
                     'name': 'iOS 项目',
                     'description': '专注于 iOS/Swift 开发的审查',
                     'prompt': '请对这个 iOS Merge Request 进行审查，重点关注：\n1. Swift 代码规范和最佳实践\n2. 内存管理（ARC、循环引用）\n3. UI 性能和响应式设计\n4. iOS API 使用是否正确\n5. 线程安全和并发处理\n6. 是否遵循 Apple 的设计指南'
+                },
+                'android': {
+                    'name': 'Android 项目',
+                    'description': '专注于 Android/Kotlin/Java 开发的审查',
+                    'prompt': '请对这个 Android Merge Request 进行审查，重点关注：\n1. Kotlin/Java 代码规范和最佳实践\n2. 内存泄漏和生命周期管理（Activity、Fragment、ViewModel）\n3. UI 性能和布局优化（避免过度绘制、使用 ConstraintLayout）\n4. Android API 使用是否正确（版本兼容性）\n5. 线程安全和异步处理（协程、RxJava、Handler）\n6. 资源管理（Bitmap、Cursor、文件流是否正确关闭）\n7. 是否遵循 Material Design 设计规范\n8. 权限申请和安全性问题\n9. 数据持久化方案（SharedPreferences、Room、SQLite）\n10. 网络请求和错误处理'
                 },
                 'backend': {
                     'name': '后端 API',

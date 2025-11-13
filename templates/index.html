@@ -6,9 +6,9 @@
     <title>PR-Agent 代码审查平台</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="/static/app.css">
-    <script src="/static/result-formatter.js?v=25"></script>
-    <script src="/static/prompts.js?v=25"></script>
-    <script src="/static/commits.js?v=25"></script>
+    <script src="/static/result-formatter.js?v=27"></script>
+    <script src="/static/prompts.js?v=27"></script>
+    <script src="/static/commits.js?v=27"></script>
 </head>
 <body class="flex h-screen bg-gray-50 overflow-hidden">
     
@@ -408,10 +408,91 @@
         <!-- Prompt 配置页面 -->
         <div id="prompt-config" class="page-section">
             <div class="p-8">
-                <h2 class="text-2xl font-bold mb-6">Prompt 配置</h2>
-                <button onclick="showPromptsDialog()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-lg">
-                    💬 配置 AI Prompt
-                </button>
+                <h2 class="text-2xl font-bold mb-6">💬 AI 审查 Prompt 配置</h2>
+                
+                <!-- Token 未配置提示 -->
+                <div id="promptTokenWarning" class="hidden bg-yellow-50 border border-yellow-200 rounded-lg p-6 mb-6">
+                    <div class="flex items-center">
+                        <svg class="w-6 h-6 text-yellow-600 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                        </svg>
+                        <div>
+                            <h3 class="text-lg font-medium text-yellow-800">未配置 GitLab Token</h3>
+                            <p class="text-sm text-yellow-700 mt-1">请先配置 GitLab Token 才能使用 AI 审查功能</p>
+                            <button onclick="showTokenDialog()" class="mt-3 bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded text-sm">
+                                立即配置
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Prompt 配置内容 -->
+                <div id="promptPageContent" class="hidden">
+                    <p class="text-sm text-gray-600 mb-6">
+                        选择或自定义 AI 代码审查的 Prompt 模板，不同的模板会影响 AI 的审查重点和风格。
+                    </p>
+                    
+                    <!-- 加载状态 -->
+                    <div id="promptsLoading" class="bg-white shadow rounded-lg p-8 text-center mb-6">
+                        <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+                        <p class="mt-2 text-gray-600">加载 Prompt 模板中...</p>
+                    </div>
+                    
+                    <!-- Prompt 配置表单 -->
+                    <div id="promptsContent" class="hidden bg-white shadow rounded-lg p-6">
+                        <!-- 当前使用的模板 -->
+                        <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <h4 class="font-medium text-gray-900">当前使用的 Prompt 模板</h4>
+                                    <p class="text-sm text-gray-600 mt-1" id="currentPromptName">-</p>
+                                </div>
+                                <span class="px-3 py-1 bg-blue-600 text-white rounded-full text-sm">使用中</span>
+                            </div>
+                        </div>
+                        
+                        <!-- 模板选择 -->
+                        <div class="mb-6">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">选择 Prompt 模板</label>
+                            <select id="promptTemplateSelect" onchange="selectPromptTemplate()" 
+                                class="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 px-4 py-2 border">
+                                <!-- 动态加载 -->
+                            </select>
+                        </div>
+                        
+                        <!-- 模板描述 -->
+                        <div class="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-6">
+                            <h4 class="font-medium text-gray-700 mb-2">模板说明</h4>
+                            <p class="text-sm text-gray-600" id="promptDescription">-</p>
+                        </div>
+                        
+                        <!-- Prompt 内容预览/编辑 -->
+                        <div class="mb-6">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">Prompt 内容</label>
+                            <textarea id="promptContent" rows="12" 
+                                class="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 font-mono text-sm px-4 py-3 border"
+                                placeholder="输入自定义 Prompt..."></textarea>
+                            <p class="mt-2 text-xs text-gray-500">
+                                💡 提示：选择预设模板后可以直接使用，也可以修改内容创建自定义模板
+                            </p>
+                        </div>
+                        
+                        <!-- 操作按钮 -->
+                        <div class="flex gap-3">
+                            <button onclick="savePromptConfig()" 
+                                class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-md font-medium">
+                                💾 保存并使用此 Prompt
+                            </button>
+                            <button onclick="resetPromptToDefault()" 
+                                class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-6 py-3 rounded-md">
+                                🔄 恢复默认
+                            </button>
+                        </div>
+                        
+                        <!-- 消息提示 -->
+                        <div id="promptMessage" class="hidden mt-4 p-4 rounded-md text-sm"></div>
+                    </div>
+                </div>
             </div>
         </div>
         
@@ -1069,6 +1150,11 @@
                 if (typeof loadConfiguredProjectsPage === 'function') {
                     loadConfiguredProjectsPage();
                 }
+            } else if (pageId === 'prompt-config') {
+                // 加载 Prompt 配置
+                if (typeof loadPromptConfigPage === 'function') {
+                    loadPromptConfigPage();
+                }
             } else if (pageId === 'settings') {
                 if (typeof loadConfig === 'function') {
                     loadConfig();
@@ -1476,11 +1562,32 @@
 
         // showWebhookDialog 和 closeWebhookDialog 已移至 webhook-config.js
 
-        function showPromptsDialog() {
-            document.getElementById('promptsDialog').classList.remove('hidden');
+        // 加载 Prompt 配置页面
+        async function loadPromptConfigPage() {
+            const tokenWarning = document.getElementById('promptTokenWarning');
+            const promptPageContent = document.getElementById('promptPageContent');
+            
+            // 检查是否配置了 Token
+            const token = localStorage.getItem('gitlab_token');
+            if (!token) {
+                tokenWarning.classList.remove('hidden');
+                promptPageContent.classList.add('hidden');
+                return;
+            }
+            
+            // 隐藏警告，显示内容
+            tokenWarning.classList.add('hidden');
+            promptPageContent.classList.remove('hidden');
+            
+            // 加载 Prompt 数据
             if (typeof loadPrompts === 'function') {
                 loadPrompts();
             }
+        }
+        
+        function showPromptsDialog() {
+            // 保留对话框函数（如果还有其他地方使用）
+            loadPromptConfigPage();
         }
 
         function closePromptsDialog() {
@@ -1763,11 +1870,11 @@
     </script>
     
     <!-- 引入模块化的 JS 文件 -->
-    <script src="/static/token-manager.js?v=25"></script>
-    <script src="/static/webhook-config.js?v=25"></script>
-    <script src="/static/auto-review-config.js?v=25"></script>
-    <script src="/static/manual-review.js?v=25"></script>
-    <script src="/static/system-config.js?v=25"></script>
+    <script src="/static/token-manager.js?v=27"></script>
+    <script src="/static/webhook-config.js?v=27"></script>
+    <script src="/static/auto-review-config.js?v=27"></script>
+    <script src="/static/manual-review.js?v=27"></script>
+    <script src="/static/system-config.js?v=27"></script>
     
     <!-- 调试：验证函数是否加载 -->
     <script>

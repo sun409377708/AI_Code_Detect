@@ -1,10 +1,40 @@
 // Prompt 管理功能
 
+// 从 localStorage 获取用户的 Prompt 配置
+function getUserPromptConfig() {
+    const stored = localStorage.getItem('user_prompt_config');
+    if (stored) {
+        try {
+            return JSON.parse(stored);
+        } catch (e) {
+            console.error('解析 Prompt 配置失败:', e);
+            return null;
+        }
+    }
+    return null;
+}
+
+// 保存用户的 Prompt 配置到 localStorage
+function saveUserPromptConfig(config) {
+    localStorage.setItem('user_prompt_config', JSON.stringify(config));
+}
+
 // 加载 Prompt 配置
 async function loadPrompts() {
     try {
         const response = await fetch('/api/prompts');
         const data = await response.json();
+        
+        // 获取用户自己的配置（从 localStorage）
+        const userConfig = getUserPromptConfig();
+        if (userConfig) {
+            // 使用用户自己的配置
+            data.current = userConfig.current || data.current;
+            if (userConfig.custom) {
+                data.templates.custom = userConfig.custom;
+            }
+        }
+        
         window.currentPrompts = data;
         
         // 显示当前使用的 Prompt
@@ -82,26 +112,17 @@ async function savePrompt() {
             };
         }
         
-        const response = await fetch('/api/prompts', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(saveData)
-        });
-        
-        const data = await response.json();
+        // 保存到浏览器 localStorage（每个用户独立）
+        saveUserPromptConfig(saveData);
         
         messageDiv.classList.remove('bg-blue-100', 'text-blue-700');
-        if (data.success) {
-            messageDiv.classList.add('bg-green-100', 'text-green-700');
-            messageDiv.textContent = '✅ ' + data.message;
-            setTimeout(() => {
-                loadPrompts();
-                togglePromptEdit();
-            }, 1500);
-        } else {
-            messageDiv.classList.add('bg-red-100', 'text-red-700');
-            messageDiv.textContent = '❌ ' + (data.error || '保存失败');
-        }
+        messageDiv.classList.add('bg-green-100', 'text-green-700');
+        messageDiv.textContent = '✅ Prompt 已保存到浏览器（仅对您生效）';
+        
+        setTimeout(() => {
+            loadPrompts();
+            togglePromptEdit();
+        }, 1500);
     } catch (error) {
         messageDiv.classList.remove('bg-blue-100', 'text-blue-700');
         messageDiv.classList.add('bg-red-100', 'text-red-700');
