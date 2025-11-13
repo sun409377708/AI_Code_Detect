@@ -5,6 +5,7 @@ PR-Agent 可视化管理平台
 """
 
 from flask import Flask, render_template, request, jsonify, send_from_directory
+from flask_cors import CORS
 import requests
 import subprocess
 import os
@@ -22,6 +23,17 @@ def get_china_time():
     return datetime.now(CHINA_TZ)
 
 app = Flask(__name__)
+
+# 启用 CORS（允许跨域请求）
+CORS(app, resources={
+    r"/api/*": {
+        "origins": "*",  # 允许所有来源，生产环境建议指定具体域名
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization", "PRIVATE-TOKEN"],
+        "expose_headers": ["Content-Type"],
+        "supports_credentials": True
+    }
+})
 
 # 配置文件路径
 ENV_FILE = os.path.expanduser("~/pr-agent-test/.env")
