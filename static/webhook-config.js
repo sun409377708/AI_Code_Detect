@@ -8,10 +8,12 @@ window.currentGroupProjects = [];
 // 显示 Webhook 配置对话框
 window.showWebhookDialog = function() {
     // 先重置对话框状态
-    document.getElementById('step2').classList.add('hidden');
-    document.getElementById('step4').classList.add('hidden');
-    document.getElementById('setupProgress').classList.add('hidden');
-    document.getElementById('setupResults').classList.add('hidden');
+    document.getElementById('step1')?.classList.remove('hidden');  // 显示步骤 1
+    document.getElementById('step2')?.classList.add('hidden');
+    document.getElementById('step3')?.classList.add('hidden');
+    document.getElementById('step4')?.classList.add('hidden');
+    document.getElementById('setupProgress')?.classList.add('hidden');
+    document.getElementById('setupResults')?.classList.add('hidden');
     window.currentGroupProjects = [];
     
     // 重置选择框
@@ -38,10 +40,12 @@ window.showWebhookDialog = function() {
 window.closeWebhookDialog = function() {
     document.getElementById('webhookDialog').classList.add('hidden');
     // 重置状态
-    document.getElementById('step2').classList.add('hidden');
-    document.getElementById('step4').classList.add('hidden');
-    document.getElementById('setupProgress').classList.add('hidden');
-    document.getElementById('setupResults').classList.add('hidden');
+    document.getElementById('step1')?.classList.remove('hidden');  // 确保下次打开时显示步骤 1
+    document.getElementById('step2')?.classList.add('hidden');
+    document.getElementById('step3')?.classList.add('hidden');
+    document.getElementById('step4')?.classList.add('hidden');
+    document.getElementById('setupProgress')?.classList.add('hidden');
+    document.getElementById('setupResults')?.classList.add('hidden');
     window.currentGroupProjects = [];
 }
 

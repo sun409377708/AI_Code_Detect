@@ -582,4 +582,7 @@ window.batchReview = async function() {
     }
 }
 
+// 为了兼容性，添加 reviewMR 作为 reviewItem 的别名
+window.reviewMR = window.reviewItem;
+
 console.log('✅ manual-review.js 已加载');

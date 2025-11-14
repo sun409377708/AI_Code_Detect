@@ -14,9 +14,6 @@ window.resetAutoReviewConfig = function() {
     document.getElementById('autoReviewPushEnabled').checked = false;
     document.getElementById('autoReviewPushNewBranchAllCommits').checked = false;
     
-    // 文件级审核 - 默认关闭
-    document.getElementById('autoReviewFileLevelEnabled').checked = false;
-    
     // 隐藏选项
     document.getElementById('mrReviewOptions').classList.add('hidden');
     document.getElementById('pushReviewOptions').classList.add('hidden');
@@ -46,15 +43,11 @@ window.loadAutoReviewConfig = async function() {
         document.getElementById('autoReviewPushEnabled').checked = pushEnabled;
         document.getElementById('autoReviewPushNewBranchAllCommits').checked = data.auto_review_push_new_branch_all_commits === 'true';
         
-        // 文件级审核配置 - 默认关闭
-        const fileLevelEnabled = data.auto_review_file_level_enabled === 'true';
-        document.getElementById('autoReviewFileLevelEnabled').checked = fileLevelEnabled;
-        
         // 显示/隐藏选项
         document.getElementById('mrReviewOptions').classList.toggle('hidden', !mrEnabled);
         document.getElementById('pushReviewOptions').classList.toggle('hidden', !pushEnabled);
         
-        console.log('自动审查配置已加载', { mrEnabled, pushEnabled, fileLevelEnabled });
+        console.log('自动审查配置已加载', { mrEnabled, pushEnabled });
         
         // 显示加载成功提示
         const messageDiv = document.getElementById('autoReviewConfigMessage');
@@ -91,7 +84,7 @@ window.saveAutoReviewConfig = async function() {
         auto_review_push_enabled: document.getElementById('autoReviewPushEnabled').checked ? 'true' : 'false',
         auto_review_push_branches: '*',  // 所有分支
         auto_review_push_new_branch_all_commits: document.getElementById('autoReviewPushNewBranchAllCommits').checked ? 'true' : 'false',
-        auto_review_file_level_enabled: document.getElementById('autoReviewFileLevelEnabled').checked ? 'true' : 'false'  // 文件级审核
+        auto_review_file_level_enabled: 'true'  // 固定启用行内评论模式
     };
     
     const messageDiv = document.getElementById('autoReviewConfigMessage');

@@ -204,7 +204,7 @@ def check_if_reviewed(mr_url):
         return False
 
 def review_mr(mr_url, mr_id, gitlab_token=None, file_level_review=False):
-    """审查单个 MR"""
+    """审查单个 MR（使用通义千问 AI）"""
     try:
         review_mode = '文件级审核' if file_level_review else '总体审核'
         review_status[mr_id] = {
@@ -215,65 +215,306 @@ def review_mr(mr_url, mr_id, gitlab_token=None, file_level_review=False):
             'review_mode': review_mode
         }
         
+        # 解析 MR URL
+        # 格式: http://gitlab.it.ikang.com/group/project/-/merge_requests/123
+        import re
+        match = re.match(r'(https?://[^/]+)/(.+?)/-/merge_requests/(\d+)', mr_url)
+        if not match:
+            raise Exception(f'无效的 MR URL 格式: {mr_url}')
+        
+        gitlab_url = match.group(1)
+        project_path = match.group(2)
+        mr_iid = match.group(3)
+        
+        # 使用用户提供的 Token 或配置文件中的 Token
+        token = gitlab_token if gitlab_token else get_gitlab_token()
+        headers = {'PRIVATE-TOKEN': token}
+        
         # 更新进度
         review_status[mr_id]['progress'] = 20
-        review_status[mr_id]['message'] = '正在连接 GitLab...'
+        review_status[mr_id]['message'] = '正在获取 MR 信息...'
         
-        # 运行 Docker 命令
-        cmd = [
-            'docker', 'run', '--rm',
-            '--env-file', ENV_FILE,
-        ]
+        # 获取 MR 详情
+        mr_api_url = f"{gitlab_url}/api/v4/projects/{project_path.replace('/', '%2F')}/merge_requests/{mr_iid}"
+        mr_response = requests.get(mr_api_url, headers=headers, timeout=30)
         
-        # 如果提供了用户的 Token，覆盖环境变量
-        if gitlab_token:
-            cmd.extend(['-e', f'GITLAB__PERSONAL_ACCESS_TOKEN={gitlab_token}'])
+        if mr_response.status_code != 200:
+            raise Exception(f'获取 MR 信息失败: {mr_response.status_code}')
         
-        # 如果启用文件级审核，添加相应的环境变量或参数
-        # 注意：这里需要根据 pr-agent 的实际支持情况调整
-        # 当前先通过环境变量传递
-        if file_level_review:
-            cmd.extend(['-e', 'PR_REVIEWER__ENABLE_FILE_LEVEL_REVIEW=true'])
-            review_status[mr_id]['message'] = '正在进行文件级详细审查...'
+        mr_data = mr_response.json()
         
-        cmd.extend([
-            'codiumai/pr-agent:latest',
-            '--pr_url', mr_url,
-            'review'
-        ])
-        
+        # 获取 MR 的 diff
         review_status[mr_id]['progress'] = 40
+        review_status[mr_id]['message'] = '正在获取代码变更...'
+        
+        changes_url = f"{gitlab_url}/api/v4/projects/{project_path.replace('/', '%2F')}/merge_requests/{mr_iid}/changes"
+        changes_response = requests.get(changes_url, headers=headers, timeout=30)
+        
+        if changes_response.status_code != 200:
+            raise Exception(f'获取 MR 变更失败: {changes_response.status_code}')
+        
+        changes_data = changes_response.json()
+        
+        # 构建 diff 文本
+        diff_text = ""
+        for change in changes_data.get('changes', []):
+            diff_text += f"\n文件: {change['new_path']}\n"
+            diff_text += change.get('diff', '')
+            diff_text += "\n" + "="*80 + "\n"
+        
+        if not diff_text.strip():
+            raise Exception('未找到代码变更')
+        
+        # 限制 diff 大小
+        max_diff_size = 50000
+        if len(diff_text) > max_diff_size:
+            diff_text = diff_text[:max_diff_size] + f"\n\n... (diff 过大，已截断，仅显示前 {max_diff_size} 字符)"
+        
+        # 调用 AI 审查
+        review_status[mr_id]['progress'] = 60
         review_status[mr_id]['message'] = '正在调用 AI 模型审查代码...'
         
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        # 获取 AI 配置
+        config = load_env_config()
+        ai_api_key = config.get('OPENAI__KEY', '')
+        ai_model = config.get('CONFIG__MODEL', 'qwen-plus')
         
-        if result.returncode == 0:
-            review_status[mr_id]['status'] = 'success'
-            review_status[mr_id]['progress'] = 100
-            review_status[mr_id]['message'] = '审查完成！'
-            review_status[mr_id]['output'] = result.stdout
-            
-            # 保存到历史记录
-            save_history(mr_url, 'success', result.stdout)
+        # 处理模型名称：去掉可能的 "openai/" 前缀
+        if ai_model.startswith('openai/'):
+            ai_model = ai_model.replace('openai/', '')
+        
+        if not ai_api_key:
+            raise Exception('未配置 AI API Key')
+        
+        # 构建 prompt
+        prompt = f"""请对以下 GitLab Merge Request 的代码变更进行详细审查：
+
+MR 标题: {mr_data.get('title', '')}
+MR 描述: {mr_data.get('description', '')}
+源分支: {mr_data.get('source_branch', '')} → 目标分支: {mr_data.get('target_branch', '')}
+
+代码变更：
+{diff_text}
+
+请从以下几个方面进行审查：
+1. 代码质量和规范性
+2. 潜在的 bug 或逻辑错误
+3. 性能问题
+4. 安全隐患
+5. 可维护性和可读性
+6. 最佳实践建议
+
+请给出具体的改进建议。"""
+        
+        # 调用通义千问 API
+        # 处理代理设置：如果配置文件中没有设置代理，则明确禁用代理
+        http_proxy = config.get('HTTP_PROXY', '')
+        if http_proxy:
+            proxies = {'http': http_proxy, 'https': http_proxy}
         else:
-            review_status[mr_id]['status'] = 'failed'
-            review_status[mr_id]['progress'] = 100
-            review_status[mr_id]['message'] = f'审查失败: {result.stderr}'
-            review_status[mr_id]['error'] = result.stderr
-            
-            save_history(mr_url, 'failed', result.stderr)
+            # 明确设置为 None 以禁用系统代理
+            proxies = {'http': None, 'https': None}
         
+        ai_response = requests.post(
+            'https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation',
+            headers={
+                'Authorization': f'Bearer {ai_api_key}',
+                'Content-Type': 'application/json'
+            },
+            json={
+                'model': ai_model,
+                'input': {'messages': [{'role': 'user', 'content': prompt}]},
+                'parameters': {'result_format': 'message'}
+            },
+            proxies=proxies,
+            timeout=120
+        )
+        
+        review_status[mr_id]['progress'] = 80
+        review_status[mr_id]['message'] = '正在发布审查结果...'
+        
+        if ai_response.status_code != 200:
+            raise Exception(f'AI 审查失败: {ai_response.status_code} - {ai_response.text}')
+        
+        ai_result = ai_response.json()
+        review_content = ai_result['output']['choices'][0]['message']['content']
+        
+        # 发布评论到 GitLab MR
+        notes_url = f"{gitlab_url}/api/v4/projects/{project_path.replace('/', '%2F')}/merge_requests/{mr_iid}/notes"
+        comment_data = {'body': f"🤖 AI 代码审查\n\n{review_content}"}
+        
+        comment_response = requests.post(
+            notes_url,
+            headers=headers,
+            json=comment_data,
+            timeout=30
+        )
+        
+        if comment_response.status_code not in [200, 201]:
+            print(f"⚠️ 发布评论失败: {comment_response.status_code} - {comment_response.text}")
+        
+        # 更新状态
+        review_status[mr_id]['status'] = 'success'
+        review_status[mr_id]['progress'] = 100
+        review_status[mr_id]['message'] = 'MR 审查完成！'
+        review_status[mr_id]['output'] = review_content
         review_status[mr_id]['end_time'] = get_china_time().isoformat()
         
-    except subprocess.TimeoutExpired:
-        review_status[mr_id]['status'] = 'failed'
-        review_status[mr_id]['message'] = '审查超时（10分钟）'
+        # 保存到新数据库
+        save_review_to_db(gitlab_token, {
+            'review_type': 'mr',
+            'review_mode': 'summary',
+            'project_name': project_path.split('/')[-1] if project_path else '',
+            'project_url': f"{gitlab_url}/{project_path}",
+            'target_url': mr_url,
+            'target_id': str(mr_iid),
+            'title': mr_data.get('title', ''),
+            'author': mr_data.get('author', {}).get('name', ''),
+            'branch': f"{mr_data.get('source_branch', '')} → {mr_data.get('target_branch', '')}",
+            'severity_high': 0,
+            'severity_medium': 0,
+            'severity_low': 0,
+            'quality_score': 80,  # MR 总体审查默认 80 分
+            'issues_found': 0,
+            'comments_created': 1,
+            'status': 'success',
+            'issues': []
+        })
+        
+        # 保存到历史记录（兼容旧系统）
+        save_history(mr_url, 'success', review_content)
+        
     except Exception as e:
         review_status[mr_id]['status'] = 'failed'
+        review_status[mr_id]['progress'] = 100
         review_status[mr_id]['message'] = f'审查失败: {str(e)}'
+        review_status[mr_id]['error'] = str(e)
+        review_status[mr_id]['end_time'] = get_china_time().isoformat()
+        
+        print(f"❌ MR 审查失败: {e}")
+        import traceback
+        traceback.print_exc()
+
+def get_or_create_user(user_token):
+    """获取或创建用户（基于 Token hash）"""
+    import hashlib
+    
+    if not user_token:
+        return None
+    
+    # 计算 Token 的 SHA256 hash
+    token_hash = hashlib.sha256(user_token.encode()).hexdigest()
+    
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        
+        # 查找用户
+        c.execute('SELECT id FROM users WHERE token_hash = ?', (token_hash,))
+        user = c.fetchone()
+        
+        if user:
+            user_id = user[0]
+            # 更新最后登录时间
+            c.execute('UPDATE users SET last_login = ? WHERE id = ?', 
+                     (get_china_time().strftime('%Y-%m-%d %H:%M:%S'), user_id))
+        else:
+            # 创建新用户
+            c.execute('''
+                INSERT INTO users (token_hash, created_at, last_login) 
+                VALUES (?, ?, ?)
+            ''', (token_hash, 
+                  get_china_time().strftime('%Y-%m-%d %H:%M:%S'),
+                  get_china_time().strftime('%Y-%m-%d %H:%M:%S')))
+            user_id = c.lastrowid
+            print(f"✅ 创建新用户: user_id={user_id}")
+        
+        conn.commit()
+        conn.close()
+        return user_id
+        
+    except Exception as e:
+        print(f"❌ 获取/创建用户失败: {e}")
+        return None
+
+def save_review_to_db(user_token, review_data):
+    """保存审查记录到数据库（新表）"""
+    try:
+        # 获取用户 ID
+        user_id = get_or_create_user(user_token)
+        if not user_id:
+            print("⚠️ 无法获取用户 ID，跳过保存")
+            return None
+        
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        
+        # 插入审查记录
+        c.execute('''
+            INSERT INTO reviews (
+                user_id, review_type, review_mode, project_name, project_url,
+                target_url, target_id, title, author, branch,
+                severity_high, severity_medium, severity_low,
+                quality_score, issues_found, comments_created,
+                status, error_message, created_at, completed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            user_id,
+            review_data.get('review_type', 'commit'),
+            review_data.get('review_mode', 'summary'),
+            review_data.get('project_name', ''),
+            review_data.get('project_url', ''),
+            review_data.get('target_url', ''),
+            review_data.get('target_id', ''),
+            review_data.get('title', ''),
+            review_data.get('author', ''),
+            review_data.get('branch', ''),
+            review_data.get('severity_high', 0),
+            review_data.get('severity_medium', 0),
+            review_data.get('severity_low', 0),
+            review_data.get('quality_score', 0),
+            review_data.get('issues_found', 0),
+            review_data.get('comments_created', 0),
+            review_data.get('status', 'success'),
+            review_data.get('error_message', ''),
+            get_china_time().strftime('%Y-%m-%d %H:%M:%S'),
+            get_china_time().strftime('%Y-%m-%d %H:%M:%S')
+        ))
+        
+        review_id = c.lastrowid
+        
+        # 保存问题详情
+        if 'issues' in review_data and review_data['issues']:
+            for issue in review_data['issues']:
+                c.execute('''
+                    INSERT INTO review_details (
+                        review_id, file_path, line_number, severity, 
+                        issue_type, description, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    review_id,
+                    issue.get('file', ''),
+                    issue.get('line', 0),
+                    issue.get('severity', 'medium'),
+                    issue.get('type', 'code_quality'),
+                    issue.get('reason', ''),
+                    get_china_time().strftime('%Y-%m-%d %H:%M:%S')
+                ))
+        
+        conn.commit()
+        conn.close()
+        
+        print(f"✅ 审查记录已保存: review_id={review_id}, type={review_data.get('review_type')}, issues={review_data.get('issues_found', 0)}")
+        return review_id
+        
+    except Exception as e:
+        print(f"❌ 保存审查记录失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
 
 def save_history(mr_url, status, output):
-    """保存审查历史"""
+    """保存审查历史（旧方法，保留兼容性）"""
     try:
         history = []
         if os.path.exists(HISTORY_FILE):
@@ -644,14 +885,103 @@ def get_config():
 
 @app.route('/api/history')
 def get_history():
-    """获取审查历史"""
+    """获取审查历史（从新数据库读取，带权限控制）"""
     try:
-        if os.path.exists(HISTORY_FILE):
-            with open(HISTORY_FILE, 'r') as f:
-                history = json.load(f)
-            return jsonify({'history': history})
-        return jsonify({'history': []})
+        # 获取用户 Token
+        user_token = request.headers.get('X-GitLab-Token')
+        
+        # 如果没有 Token，返回旧数据（兼容性）
+        if not user_token:
+            if os.path.exists(HISTORY_FILE):
+                with open(HISTORY_FILE, 'r') as f:
+                    history = json.load(f)
+                return jsonify({'history': history, 'source': 'legacy'})
+            return jsonify({'history': [], 'source': 'legacy'})
+        
+        # 从新数据库读取（只返回当前用户的数据）
+        user_id = get_or_create_user(user_token)
+        if not user_id:
+            return jsonify({'history': [], 'source': 'new', 'error': '无法识别用户'}), 401
+        
+        conn = sqlite3.connect(DB_FILE)
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+        
+        # 查询该用户的审查记录
+        c.execute('''
+            SELECT 
+                id, review_type, review_mode, project_name, target_url,
+                severity_high, severity_medium, severity_low,
+                quality_score, issues_found, comments_created,
+                status, created_at, completed_at
+            FROM reviews 
+            WHERE user_id = ? 
+            ORDER BY created_at DESC
+            LIMIT 100
+        ''', (user_id,))
+        
+        rows = c.fetchall()
+        
+        # 转换为字典列表
+        history = []
+        for row in rows:
+            history.append({
+                'id': row['id'],
+                'type': row['review_type'],
+                'mode': row['review_mode'],
+                'project_name': row['project_name'],
+                'url': row['target_url'],
+                'severity': {
+                    'high': row['severity_high'],
+                    'medium': row['severity_medium'],
+                    'low': row['severity_low']
+                },
+                'quality_score': row['quality_score'],
+                'issues_found': row['issues_found'],
+                'comments_created': row['comments_created'],
+                'status': row['status'],
+                'timestamp': row['created_at']
+            })
+        
+        # 统计信息
+        c.execute('''
+            SELECT 
+                COUNT(*) as total,
+                SUM(CASE WHEN review_type = 'mr' THEN 1 ELSE 0 END) as mr_count,
+                SUM(CASE WHEN review_type = 'commit' THEN 1 ELSE 0 END) as commit_count,
+                COUNT(DISTINCT project_name) as project_count,
+                AVG(quality_score) as avg_score,
+                SUM(severity_high) as total_high,
+                SUM(severity_medium) as total_medium,
+                SUM(severity_low) as total_low
+            FROM reviews 
+            WHERE user_id = ?
+        ''', (user_id,))
+        
+        stats = c.fetchone()
+        conn.close()
+        
+        return jsonify({
+            'history': history,
+            'source': 'new',
+            'stats': {
+                'total': stats['total'],
+                'mr_count': stats['mr_count'],
+                'commit_count': stats['commit_count'],
+                'project_count': stats['project_count'],
+                'avg_score': round(stats['avg_score'] or 0, 1),
+                'severity': {
+                    'high': stats['total_high'] or 0,
+                    'medium': stats['total_medium'] or 0,
+                    'low': stats['total_low'] or 0
+                }
+            }
+        })
+        
     except Exception as e:
+        print(f"获取审查历史失败: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/config', methods=['POST'])
@@ -1377,7 +1707,37 @@ def review_commit():
                     review_status[review_id]['message'] = f'文件级审核完成！创建了 {comments_created} 条行内评论'
                     review_status[review_id]['output'] = issues_summary
                     
-                    # 保存历史记录
+                    # 计算质量评分（基于问题数量和严重程度）
+                    total_issues = len(issues) if issues else 0
+                    high_count = len([i for i in issues if i.get('severity') == 'high']) if issues else 0
+                    medium_count = len([i for i in issues if i.get('severity') == 'medium']) if issues else 0
+                    low_count = len([i for i in issues if i.get('severity') == 'low']) if issues else 0
+                    
+                    # 评分算法：100分 - (高危*10 + 中等*5 + 低危*2)
+                    quality_score = max(0, 100 - (high_count * 10 + medium_count * 5 + low_count * 2))
+                    
+                    # 保存到新数据库
+                    save_review_to_db(user_gitlab_token, {
+                        'review_type': 'commit',
+                        'review_mode': 'inline',
+                        'project_name': project_path.split('/')[-1] if project_path else '',
+                        'project_url': f"{gitlab_url}/{project_path}",
+                        'target_url': commit_url,
+                        'target_id': commit_sha,
+                        'title': f"Commit {commit_sha[:8]}",
+                        'author': '',
+                        'branch': '',
+                        'severity_high': high_count,
+                        'severity_medium': medium_count,
+                        'severity_low': low_count,
+                        'quality_score': quality_score,
+                        'issues_found': total_issues,
+                        'comments_created': comments_created,
+                        'status': 'success',
+                        'issues': issues if issues else []
+                    })
+                    
+                    # 保存历史记录（兼容旧系统）
                     save_history(commit_url, 'commit', 'success')
                     return  # 文件级审核完成，直接返回
                 
@@ -1443,7 +1803,31 @@ def review_commit():
                     review_status[review_id]['message'] = 'Commit 审查完成'
                     review_status[review_id]['output'] = review_content
                     
-                    # 保存历史记录
+                    # 简单评分：总体审核默认给 80 分（因为没有详细的问题统计）
+                    quality_score = 80
+                    
+                    # 保存到新数据库
+                    save_review_to_db(user_gitlab_token, {
+                        'review_type': 'commit',
+                        'review_mode': 'summary',
+                        'project_name': project_path.split('/')[-1] if project_path else '',
+                        'project_url': f"{gitlab_url}/{project_path}",
+                        'target_url': commit_url,
+                        'target_id': commit_sha,
+                        'title': f"Commit {commit_sha[:8]}",
+                        'author': '',
+                        'branch': '',
+                        'severity_high': 0,
+                        'severity_medium': 0,
+                        'severity_low': 0,
+                        'quality_score': quality_score,
+                        'issues_found': 0,
+                        'comments_created': 1,
+                        'status': 'success',
+                        'issues': []
+                    })
+                    
+                    # 保存历史记录（兼容旧系统）
                     save_history(commit_url, 'commit', 'success')
                 else:
                     raise Exception(f'AI 审查失败: {ai_response.text}')
@@ -2459,34 +2843,180 @@ def should_auto_review_push(data, branch):
     return True
 
 def review_mr_from_webhook(project_url, mr_iid):
-    """从 Webhook 触发 MR 审查"""
+    """从 Webhook 触发 MR 审查（使用通义千问）"""
     try:
         mr_url = f"{project_url}/merge_requests/{mr_iid}"
+        print(f"=" * 80)
         print(f"🚀 开始审查 MR: {mr_url}")
+        print(f"=" * 80)
         
-        # 运行 Docker 命令调用 PR-Agent
-        cmd = [
-            'docker', 'run', '--rm',
-            '--env-file', ENV_FILE,
-            'codiumai/pr-agent:latest',
-            '--pr_url', mr_url,
-            'review'
-        ]
+        # 解析 MR URL
+        import re
+        match = re.match(r'(https?://[^/]+)/(.+?)/merge_requests/(\d+)', mr_url)
+        if not match:
+            print(f"❌ 无效的 MR URL 格式: {mr_url}")
+            return
         
-        print(f"📝 执行命令: {' '.join(cmd)}")
+        gitlab_url = match.group(1)
+        project_path = match.group(2)
         
-        # 执行审查（设置超时10分钟）
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        # 获取配置
+        config = load_env_config()
+        gitlab_token = config.get('GITLAB__PERSONAL_ACCESS_TOKEN', '')
+        ai_api_key = config.get('OPENAI__KEY', '')
+        ai_model = config.get('CONFIG__MODEL', 'qwen-plus')
         
-        if result.returncode == 0:
-            print(f"✅ MR 审查完成！")
-            print(f"输出: {result.stdout[:500]}")  # 打印前500字符
+        if not gitlab_token:
+            print("❌ 错误: 未配置 GitLab Token")
+            return
+        
+        if not ai_api_key:
+            print("❌ 错误: 未配置 AI API Key")
+            return
+        
+        # 处理模型名称
+        if ai_model.startswith('openai/'):
+            ai_model = ai_model.replace('openai/', '')
+        
+        headers = {'PRIVATE-TOKEN': gitlab_token}
+        
+        print(f"📡 获取 MR 信息...")
+        
+        # 获取 MR 详情
+        mr_api_url = f"{gitlab_url}/api/v4/projects/{project_path.replace('/', '%2F')}/merge_requests/{mr_iid}"
+        mr_response = requests.get(mr_api_url, headers=headers, timeout=30)
+        
+        if mr_response.status_code != 200:
+            print(f"❌ 获取 MR 信息失败: {mr_response.status_code}")
+            return
+        
+        mr_data = mr_response.json()
+        print(f"✅ MR 标题: {mr_data.get('title', '')}")
+        
+        # 获取 MR 的 diff
+        print(f"📡 获取代码变更...")
+        changes_url = f"{gitlab_url}/api/v4/projects/{project_path.replace('/', '%2F')}/merge_requests/{mr_iid}/changes"
+        changes_response = requests.get(changes_url, headers=headers, timeout=30)
+        
+        if changes_response.status_code != 200:
+            print(f"❌ 获取 MR 变更失败: {changes_response.status_code}")
+            return
+        
+        changes_data = changes_response.json()
+        
+        # 构建 diff 文本
+        diff_text = ""
+        for change in changes_data.get('changes', []):
+            diff_text += f"\n文件: {change['new_path']}\n"
+            diff_text += change.get('diff', '')
+            diff_text += "\n" + "="*80 + "\n"
+        
+        if not diff_text.strip():
+            print("⚠️ 未找到代码变更")
+            return
+        
+        # 限制 diff 大小
+        max_diff_size = 50000
+        if len(diff_text) > max_diff_size:
+            diff_text = diff_text[:max_diff_size] + f"\n\n... (diff 过大，已截断)"
+        
+        print(f"✅ 获取到 {len(changes_data.get('changes', []))} 个文件的变更")
+        print(f"🤖 调用 AI 审查...")
+        
+        # 构建 prompt
+        prompt = f"""请对以下 GitLab Merge Request 的代码变更进行详细审查：
+
+MR 标题: {mr_data.get('title', '')}
+MR 描述: {mr_data.get('description', '')}
+源分支: {mr_data.get('source_branch', '')} → 目标分支: {mr_data.get('target_branch', '')}
+
+代码变更：
+{diff_text}
+
+请从以下几个方面进行审查：
+1. 代码质量和规范性
+2. 潜在的 bug 或逻辑错误
+3. 性能问题
+4. 安全隐患
+5. 可维护性和可读性
+6. 最佳实践建议
+
+请给出具体的改进建议。"""
+        
+        # 调用通义千问 API
+        http_proxy = config.get('HTTP_PROXY', '')
+        if http_proxy:
+            proxies = {'http': http_proxy, 'https': http_proxy}
         else:
-            print(f"❌ MR 审查失败！")
-            print(f"错误: {result.stderr[:500]}")
+            proxies = {'http': None, 'https': None}
         
-    except subprocess.TimeoutExpired:
-        print(f"⏱️ MR 审查超时（10分钟）")
+        ai_response = requests.post(
+            'https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation',
+            headers={
+                'Authorization': f'Bearer {ai_api_key}',
+                'Content-Type': 'application/json'
+            },
+            json={
+                'model': ai_model,
+                'input': {'messages': [{'role': 'user', 'content': prompt}]},
+                'parameters': {'result_format': 'message'}
+            },
+            proxies=proxies,
+            timeout=120
+        )
+        
+        if ai_response.status_code != 200:
+            print(f"❌ AI 审查失败: {ai_response.status_code} - {ai_response.text}")
+            return
+        
+        ai_result = ai_response.json()
+        review_content = ai_result['output']['choices'][0]['message']['content']
+        
+        print(f"✅ AI 审查完成")
+        print(f"📝 发布评论到 GitLab...")
+        
+        # 发布评论到 GitLab MR
+        notes_url = f"{gitlab_url}/api/v4/projects/{project_path.replace('/', '%2F')}/merge_requests/{mr_iid}/notes"
+        comment_data = {'body': f"🤖 AI 代码审查（自动触发）\n\n{review_content}"}
+        
+        comment_response = requests.post(
+            notes_url,
+            headers=headers,
+            json=comment_data,
+            timeout=30
+        )
+        
+        if comment_response.status_code in [200, 201]:
+            print(f"✅ 评论发布成功！")
+        else:
+            print(f"⚠️ 发布评论失败: {comment_response.status_code}")
+        
+        # 保存到数据库
+        print(f"💾 保存审查记录到数据库...")
+        save_review_to_db(gitlab_token, {
+            'review_type': 'mr',
+            'review_mode': 'summary',
+            'project_name': project_path.split('/')[-1] if project_path else '',
+            'project_url': f"{gitlab_url}/{project_path}",
+            'target_url': mr_url,
+            'target_id': str(mr_iid),
+            'title': mr_data.get('title', ''),
+            'author': mr_data.get('author', {}).get('name', ''),
+            'branch': f"{mr_data.get('source_branch', '')} → {mr_data.get('target_branch', '')}",
+            'severity_high': 0,
+            'severity_medium': 0,
+            'severity_low': 0,
+            'quality_score': 80,
+            'issues_found': 0,
+            'comments_created': 1,
+            'status': 'success',
+            'issues': []
+        })
+        
+        print(f"✅ MR 审查完成！")
+        print(f"🔗 查看: {mr_url}")
+        print(f"=" * 80)
+        
     except Exception as e:
         print(f"❌ 审查 MR 失败: {e}")
         import traceback
@@ -2537,12 +3067,11 @@ def review_commit_from_webhook(project, commit_sha):
         diffs = diff_response.json()
         print(f"✅ 获取到 {len(diffs)} 个文件的变更")
         
-        # 检查是否启用文件级审核
-        file_level_enabled = config.get('AUTO_REVIEW_FILE_LEVEL_ENABLED', 'false') == 'true'
-        review_mode = '文件级审核（行内评论）' if file_level_enabled else '总体审核'
-        print(f"📂 审查模式: {review_mode}")
+        # Commit 自动审查固定使用行内评论模式
+        print(f"📂 审查模式: 文件级审核（行内评论）")
         
-        if file_level_enabled:
+        # 文件级审核 - 创建行内评论
+        if True:
             # 文件级审核 - 创建行内评论
             print(f"🔍 开始文件级审核...")
             comments_created = 0
@@ -2651,84 +3180,106 @@ def review_commit_from_webhook(project, commit_sha):
                             continue
             
             print(f"✅ 文件级审核完成！创建了 {comments_created} 条行内评论")
+            
+            # 保存到数据库
+            print(f"💾 保存审查记录到数据库...")
+            commit_url = f"{project_url}/-/commit/{commit_sha}"
+            save_review_to_db(gitlab_token, {
+                'review_type': 'commit',
+                'review_mode': 'inline',
+                'project_name': project_path.split('/')[-1] if project_path else '',
+                'project_url': project_url,
+                'target_url': commit_url,
+                'target_id': commit_sha,
+                'title': f"Commit {commit_sha[:8]}（自动触发）",
+                'author': '',
+                'branch': '',
+                'severity_high': 0,  # Webhook 暂不统计严重程度
+                'severity_medium': 0,
+                'severity_low': 0,
+                'quality_score': 85,  # 文件级审核默认 85 分
+                'issues_found': comments_created,
+                'comments_created': comments_created,
+                'status': 'success',
+                'issues': []
+            })
+            
+            print(f"=" * 80)
             return
-        
-        # 总体审核 - 创建总评论
-        # 构建 diff 文本
-        diff_text = ""
-        for diff in diffs[:10]:  # 限制最多10个文件
-            diff_text += f"\n\n文件: {diff['new_path']}\n"
-            diff_text += f"变更: +{diff.get('added_lines', 0)} -{diff.get('removed_lines', 0)}\n"
-            diff_text += diff.get('diff', '')[:2000]  # 每个文件最多2000字符
-        
-        print(f"🤖 调用 AI 进行代码审查...")
-        
-        # 构建审查 prompt
-        prompt = f"""请对以下 Git Commit 的代码变更进行审查：
-
-代码变更：
-{diff_text}
-
-请提供：
-1. ✅ 代码质量评估
-2. ⚠️ 潜在问题和建议
-3. 💡 优化建议
-4. 📝 其他注意事项
-
-请使用中文回复，并使用 ✅ ⚠️ ❌ 💡 等图标标注不同类型的反馈。"""
-
-        # 禁用代理
-        proxies = {'http': None, 'https': None}
-        
-        # 调用 AI API
-        ai_response = requests.post(
-            'https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation',
-            headers={
-                'Authorization': f'Bearer {ai_api_key}',
-                'Content-Type': 'application/json'
-            },
-            json={
-                'model': ai_model,
-                'input': {'messages': [{'role': 'user', 'content': prompt}]},
-                'parameters': {'result_format': 'message'}
-            },
-            proxies=proxies,
-            timeout=120
-        )
-        
-        if ai_response.status_code != 200:
-            print(f"❌ AI 审查失败: {ai_response.status_code} - {ai_response.text}")
-            return
-        
-        ai_result = ai_response.json()
-        review_content = ai_result['output']['choices'][0]['message']['content']
-        
-        print(f"✅ AI 审查完成")
-        print(f"📝 发布评论到 GitLab...")
-        
-        # 发布评论到 GitLab Commit
-        comment_url = f"{gitlab_url}/api/v4/projects/{project_path.replace('/', '%2F')}/repository/commits/{commit_sha}/comments"
-        comment_data = {'note': f"🤖 AI 代码审查\n\n{review_content}"}
-        
-        comment_response = requests.post(
-            comment_url,
-            headers=headers,
-            json=comment_data,
-            timeout=30
-        )
-        
-        if comment_response.status_code in [200, 201]:
-            print(f"✅ 评论发布成功！")
-            print(f"🔗 查看: {project_url}/-/commit/{commit_sha}")
-        else:
-            print(f"❌ 发布评论失败: {comment_response.status_code} - {comment_response.text}")
-        
-        print(f"=" * 80)
         
     except Exception as e:
         print(f"❌ 审查 Commit 失败: {e}")
         import traceback
         traceback.print_exc()
+
+@app.route('/api/recent-projects', methods=['GET'])
+def get_recent_projects():
+    """获取最近活跃的项目列表"""
+    try:
+        # 获取用户的 GitLab Token
+        user_gitlab_token = request.headers.get('X-GitLab-Token')
+        if not user_gitlab_token:
+            user_gitlab_token = get_gitlab_token()
+        
+        gitlab_url = get_gitlab_url()
+        
+        # 调用 GitLab API 获取项目列表
+        # 按最后活跃时间排序，获取前 50 个项目
+        projects_url = f"{gitlab_url}/api/v4/projects"
+        params = {
+            'membership': 'true',  # 只获取用户参与的项目
+            'order_by': 'last_activity_at',  # 按最后活跃时间排序
+            'sort': 'desc',  # 降序
+            'per_page': 50,  # 每页 50 个
+            'archived': 'false',  # 排除已归档的项目
+            'simple': 'false'  # 获取完整信息
+        }
+        
+        headers = {'PRIVATE-TOKEN': user_gitlab_token}
+        
+        response = requests.get(
+            projects_url,
+            headers=headers,
+            params=params,
+            timeout=30
+        )
+        
+        if response.status_code != 200:
+            return jsonify({
+                'error': f'获取项目列表失败: {response.status_code}',
+                'details': response.text
+            }), response.status_code
+        
+        projects = response.json()
+        
+        # 提取需要的字段
+        project_list = []
+        for project in projects:
+            project_list.append({
+                'id': project.get('id'),
+                'name': project.get('name'),
+                'path': project.get('path'),
+                'path_with_namespace': project.get('path_with_namespace'),
+                'description': project.get('description', ''),
+                'web_url': project.get('web_url'),
+                'last_activity_at': project.get('last_activity_at'),
+                'star_count': project.get('star_count', 0),
+                'forks_count': project.get('forks_count', 0),
+                'open_issues_count': project.get('open_issues_count', 0),
+                'namespace': project.get('namespace', {}).get('name', ''),
+                'avatar_url': project.get('avatar_url')
+            })
+        
+        return jsonify({
+            'projects': project_list,
+            'total': len(project_list)
+        })
+        
+    except Exception as e:
+        print(f"获取最近活跃项目失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     print("=" * 60)
