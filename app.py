@@ -203,14 +203,16 @@ def check_if_reviewed(mr_url):
         print(f"检查审查状态失败: {e}")
         return False
 
-def review_mr(mr_url, mr_id, gitlab_token=None):
+def review_mr(mr_url, mr_id, gitlab_token=None, file_level_review=False):
     """审查单个 MR"""
     try:
+        review_mode = '文件级审核' if file_level_review else '总体审核'
         review_status[mr_id] = {
             'status': 'running',
             'progress': 0,
-            'message': '正在启动审查...',
-            'start_time': get_china_time().isoformat()
+            'message': f'正在启动审查（{review_mode}）...',
+            'start_time': get_china_time().isoformat(),
+            'review_mode': review_mode
         }
         
         # 更新进度
@@ -226,6 +228,13 @@ def review_mr(mr_url, mr_id, gitlab_token=None):
         # 如果提供了用户的 Token，覆盖环境变量
         if gitlab_token:
             cmd.extend(['-e', f'GITLAB__PERSONAL_ACCESS_TOKEN={gitlab_token}'])
+        
+        # 如果启用文件级审核，添加相应的环境变量或参数
+        # 注意：这里需要根据 pr-agent 的实际支持情况调整
+        # 当前先通过环境变量传递
+        if file_level_review:
+            cmd.extend(['-e', 'PR_REVIEWER__ENABLE_FILE_LEVEL_REVIEW=true'])
+            review_status[mr_id]['message'] = '正在进行文件级详细审查...'
         
         cmd.extend([
             'codiumai/pr-agent:latest',
@@ -322,12 +331,56 @@ def get_user_projects():
                 'path_with_namespace': project['path_with_namespace'],
                 'web_url': project['web_url'],
                 'last_activity_at': project.get('last_activity_at', ''),
-                'description': project.get('description', '')[:100] if project.get('description') else ''
+                'description': project.get('description', '')[:100] if project.get('description') else '',
+                'namespace': project.get('namespace'),  # 添加 namespace 信息
+                'star_count': project.get('star_count', 0),
+                'forks_count': project.get('forks_count', 0)
             })
         
         return jsonify({'projects': simplified_projects})
     except Exception as e:
         print(f"获取用户项目失败: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/user/starred-projects', methods=['GET'])
+def get_starred_projects():
+    """获取用户在 GitLab 上 Star 过的项目"""
+    try:
+        gitlab_url = get_gitlab_url()
+        headers = {'PRIVATE-TOKEN': get_gitlab_token()}
+        
+        # 获取用户 Star 过的项目
+        api_url = f"{gitlab_url}/api/v4/projects"
+        params = {
+            'starred': 'true',  # 只获取 Star 过的项目
+            'order_by': 'last_activity_at',
+            'sort': 'desc',
+            'per_page': 100
+        }
+        
+        response = requests.get(api_url, headers=headers, params=params)
+        response.raise_for_status()
+        
+        projects = response.json()
+        
+        # 简化项目信息
+        simplified_projects = []
+        for project in projects:
+            simplified_projects.append({
+                'id': project['id'],
+                'name': project['name'],
+                'path_with_namespace': project['path_with_namespace'],
+                'web_url': project['web_url'],
+                'last_activity_at': project.get('last_activity_at', ''),
+                'description': project.get('description', '')[:100] if project.get('description') else '',
+                'namespace': project.get('namespace'),
+                'star_count': project.get('star_count', 0),
+                'forks_count': project.get('forks_count', 0)
+            })
+        
+        return jsonify({'projects': simplified_projects})
+    except Exception as e:
+        print(f"获取 Star 项目失败: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/user/groups', methods=['GET'])
@@ -535,6 +588,7 @@ def start_review():
     data = request.json
     mr_url = data.get('mr_url', '')
     mr_id = data.get('mr_id', '')
+    file_level_review = data.get('file_level_review', False)  # 获取文件级审核参数
     
     if not mr_url or not mr_id:
         return jsonify({'error': '缺少参数'}), 400
@@ -542,8 +596,12 @@ def start_review():
     # 获取用户的 GitLab Token
     gitlab_token = request.headers.get('X-GitLab-Token')
     
+    # 记录审查模式
+    review_mode = '文件级审核' if file_level_review else '总体审核'
+    print(f"📂 MR 审查模式: {review_mode}")
+    
     # 在后台线程中执行审查
-    thread = threading.Thread(target=review_mr, args=(mr_url, mr_id, gitlab_token))
+    thread = threading.Thread(target=review_mr, args=(mr_url, mr_id, gitlab_token, file_level_review))
     thread.daemon = True
     thread.start()
     
@@ -855,12 +913,17 @@ def review_commit():
         data = request.json
         commit_url = data.get('commit_url', '')
         commit_id = data.get('commit_id', '')
+        file_level_review = data.get('file_level_review', False)  # 获取文件级审核参数
         
         if not commit_url or not commit_id:
             return jsonify({'error': '请提供 Commit URL 和 ID'}), 400
         
         # 获取用户的 GitLab Token
         user_gitlab_token = request.headers.get('X-GitLab-Token')
+        
+        # 记录审查模式
+        review_mode = '文件级审核' if file_level_review else '总体审核'
+        print(f"📂 Commit 审查模式: {review_mode}")
         
         # 生成唯一的审查 ID
         review_id = f"commit-{commit_id[:8]}-{int(get_china_time().timestamp())}"
@@ -932,8 +995,395 @@ def review_commit():
                 
                 review_status[review_id]['progress'] = 50
                 
-                # 构建审查 prompt
-                prompt = f"""请对以下 Git Commit 的代码变更进行审查：
+                # 根据审查模式选择不同的审查方式
+                if file_level_review:
+                    # 两阶段审查策略：先总体扫描，再针对性行内审查
+                    review_status[review_id]['message'] = '阶段 1/2: 总体扫描，识别问题...'
+                    review_status[review_id]['progress'] = 40
+                    
+                    # 阶段 1: 总体审查，让 AI 识别有问题的代码块
+                    diff_text = ""
+                    for diff in diffs[:10]:
+                        diff_text += f"\n\n文件: {diff['new_path']}\n"
+                        diff_text += f"变更: +{diff.get('added_lines', 0)} -{diff.get('removed_lines', 0)}\n"
+                        diff_text += diff.get('diff', '')[:2000]
+                    
+                    # 让 AI 识别问题
+                    scan_prompt = f"""请快速扫描以下代码变更，识别需要详细审查的代码块。
+
+代码变更：
+{diff_text}
+
+请以 JSON 格式返回需要详细审查的代码块列表，格式如下：
+```json
+{{
+  "issues": [
+    {{
+      "file": "文件路径",
+      "line": 行号,
+      "severity": "high/medium/low",
+      "reason": "简短原因（不超过20字）"
+    }}
+  ]
+}}
+```
+
+**筛选标准：**
+- high: 安全漏洞、空指针、内存泄漏、逻辑错误
+- medium: 性能问题、代码规范、潜在bug
+- low: 代码风格、命名建议
+
+**只返回 high 和 medium 级别的问题，忽略 low 级别。**
+如果代码没有问题，返回空数组。"""
+
+                    try:
+                        scan_response = requests.post(
+                            'https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation',
+                            headers={
+                                'Authorization': f'Bearer {ai_api_key}',
+                                'Content-Type': 'application/json'
+                            },
+                            json={
+                                'model': ai_model,
+                                'input': {'messages': [{'role': 'user', 'content': scan_prompt}]},
+                                'parameters': {'result_format': 'message'}
+                            },
+                            proxies={'http': None, 'https': None},
+                            timeout=60
+                        )
+                        
+                        if scan_response.status_code != 200:
+                            raise Exception(f'总体扫描失败: {scan_response.text}')
+                        
+                        scan_result = scan_response.json()
+                        scan_content = scan_result['output']['choices'][0]['message']['content']
+                        
+                        print(f"📄 AI 扫描结果:\n{scan_content[:500]}...")
+                        
+                        # 解析 JSON 结果
+                        import json
+                        import re
+                        json_match = re.search(r'```json\s*(\{.*?\})\s*```', scan_content, re.DOTALL)
+                        if json_match:
+                            issues_data = json.loads(json_match.group(1))
+                            issues = issues_data.get('issues', [])
+                        else:
+                            # 尝试直接解析
+                            issues = json.loads(scan_content).get('issues', [])
+                        
+                        print(f"📊 总体扫描完成，发现 {len(issues)} 个需要详细审查的问题")
+                        if issues:
+                            print(f"   问题列表: {json.dumps(issues, ensure_ascii=False, indent=2)}")
+                        
+                        if len(issues) == 0:
+                            review_status[review_id]['progress'] = 100
+                            review_status[review_id]['status'] = 'success'
+                            review_status[review_id]['message'] = '✅ 代码质量良好，未发现需要详细审查的问题'
+                            review_status[review_id]['output'] = '✅ 总体扫描完成\n\n代码质量良好，未发现严重问题。'
+                            save_history(commit_url, 'commit', 'success')
+                            return
+                        
+                    except Exception as e:
+                        print(f"⚠️ 总体扫描失败，回退到全量审查: {e}")
+                        issues = []  # 如果扫描失败，回退到全量审查
+                    
+                    # 阶段 2: 针对性行内审查
+                    review_status[review_id]['message'] = f'阶段 2/2: 详细审查 {len(issues) if issues else "所有"} 个代码块...'
+                    review_status[review_id]['progress'] = 50
+                    
+                    comments_created = 0
+                    total_files = min(len(diffs), 10)
+                    
+                    # 如果有 AI 识别的问题列表，只审查这些代码块
+                    if issues:
+                        # 针对性审查：只审查 AI 识别出的问题代码块
+                        for idx, issue in enumerate(issues):
+                            file_path = issue.get('file', '')
+                            target_line = issue.get('line', 0)
+                            severity = issue.get('severity', 'medium')
+                            reason = issue.get('reason', '')
+                            
+                            print(f"🔍 处理问题 {idx+1}/{len(issues)}: {file_path}:{target_line} [{severity}] - {reason}")
+                            
+                            review_status[review_id]['progress'] = 50 + int((idx / len(issues)) * 40)
+                            review_status[review_id]['message'] = f'详细审查 {idx+1}/{len(issues)}: {file_path}:{target_line}'
+                            
+                            # 找到对应的 diff
+                            target_diff = None
+                            for diff in diffs:
+                                if diff['new_path'] == file_path:
+                                    target_diff = diff
+                                    break
+                            
+                            if not target_diff:
+                                print(f"⚠️ 未找到文件的 diff: {file_path}")
+                                print(f"   可用的文件: {[d['new_path'] for d in diffs]}")
+                                continue
+                            
+                            diff_content = target_diff.get('diff', '')
+                            if not diff_content:
+                                continue
+                            
+                            # 解析 diff，找到目标行附近的代码块
+                            import re
+                            hunks = re.findall(r'@@ -(\d+),?\d* \+(\d+),?\d* @@([^@]*)', diff_content)
+                            
+                            print(f"   找到 {len(hunks)} 个代码块")
+                            
+                            found_target = False
+                            for hunk in hunks:
+                                old_start, new_start, hunk_content = hunk
+                                new_line = int(new_start)
+                                
+                                # 提取新增的行
+                                added_lines = []
+                                current_line = new_line
+                                for line in hunk_content.split('\n'):
+                                    if line.startswith('+') and not line.startswith('+++'):
+                                        added_lines.append((current_line, line[1:]))
+                                        current_line += 1
+                                    elif not line.startswith('-'):
+                                        current_line += 1
+                                
+                                if not added_lines:
+                                    continue
+                                
+                                start_line = added_lines[0][0]
+                                end_line = added_lines[-1][0]
+                                
+                                print(f"   代码块范围: {start_line}-{end_line}, 目标行: {target_line}")
+                                
+                                # 检查目标行是否在这个代码块范围内（允许 ±5 行的偏差）
+                                if (start_line - 5) <= target_line <= (end_line + 5):
+                                    found_target = True
+                                    print(f"   ✅ 找到匹配的代码块（允许偏差）")
+                                    # 使用实际的代码块起始行
+                                    target_line = start_line
+                                    code_block = '\n'.join([line[1] for line in added_lines])
+                                    
+                                    # 构建详细审查 prompt
+                                    block_prompt = f"""请详细审查以下代码片段（文件: {file_path}, 行 {start_line}-{end_line}）：
+
+```
+{code_block}
+```
+
+**初步扫描发现的问题：**
+- 严重程度: {severity}
+- 问题描述: {reason}
+
+请提供详细的审查意见：
+1. ❌ 确认问题并详细说明
+2. 💡 提供具体的修复建议（包含代码示例）
+3. ⚠️ 其他需要注意的地方
+
+请使用中文，提供可执行的修复代码。"""
+                                    
+                                    # 调用 AI 进行详细审查
+                                    try:
+                                        ai_response = requests.post(
+                                            'https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation',
+                                            headers={
+                                                'Authorization': f'Bearer {ai_api_key}',
+                                                'Content-Type': 'application/json'
+                                            },
+                                            json={
+                                                'model': ai_model,
+                                                'input': {'messages': [{'role': 'user', 'content': block_prompt}]},
+                                                'parameters': {'result_format': 'message'}
+                                            },
+                                            proxies={'http': None, 'https': None},
+                                            timeout=60
+                                        )
+                                        
+                                        if ai_response.status_code == 200:
+                                            ai_result = ai_response.json()
+                                            review_comment = ai_result['output']['choices'][0]['message']['content']
+                                            
+                                            # 创建行内评论（使用 Comments API）
+                                            comment_url = f"{gitlab_url}/api/v4/projects/{project_path.replace('/', '%2F')}/repository/commits/{commit_sha}/comments"
+                                            comment_data = {
+                                                'note': f"🤖 **AI 代码审查** [{severity.upper()}]\n\n**文件:** {file_path}:{target_line}\n\n{review_comment}",
+                                                'path': file_path,
+                                                'line': target_line,
+                                                'line_type': 'new'
+                                            }
+                                            
+                                            comment_response = requests.post(
+                                                comment_url,
+                                                headers=headers,
+                                                json=comment_data,
+                                                timeout=30
+                                            )
+                                            
+                                            if comment_response.status_code in [200, 201]:
+                                                comments_created += 1
+                                                print(f"✅ 创建行内评论: {file_path}:{target_line} [{severity}]")
+                                            else:
+                                                print(f"⚠️ 创建评论失败: {comment_response.status_code}")
+                                                print(f"   错误详情: {comment_response.text}")
+                                                print(f"   请求数据: {comment_data}")
+                                    
+                                    except Exception as e:
+                                        print(f"⚠️ 详细审查失败: {e}")
+                                        import traceback
+                                        traceback.print_exc()
+                                    
+                                    break  # 找到目标行后跳出
+                            
+                            if not found_target:
+                                print(f"⚠️ 未找到目标行 {target_line} 对应的代码块")
+                    
+                    else:
+                        # 回退到全量审查：审查所有代码块
+                        for idx, diff in enumerate(diffs[:10]):
+                            file_path = diff['new_path']
+                            diff_content = diff.get('diff', '')
+                            
+                            if not diff_content:
+                                continue
+                            
+                            review_status[review_id]['progress'] = 50 + int((idx / total_files) * 30)
+                            review_status[review_id]['message'] = f'审查文件 {idx+1}/{total_files}: {file_path}'
+                            
+                            # 解析 diff 获取变更的行号
+                            import re
+                            hunks = re.findall(r'@@ -(\d+),?\d* \+(\d+),?\d* @@([^@]*)', diff_content)
+                            
+                            for hunk in hunks:
+                                old_start, new_start, hunk_content = hunk
+                                new_line = int(new_start)
+                                
+                                # 只分析新增或修改的行
+                                added_lines = []
+                                current_line = new_line
+                                for line in hunk_content.split('\n'):
+                                    if line.startswith('+') and not line.startswith('+++'):
+                                        added_lines.append((current_line, line[1:]))
+                                        current_line += 1
+                                    elif not line.startswith('-'):
+                                        current_line += 1
+                                
+                                # 如果有新增的行，对这个代码块进行审查
+                                if added_lines and len(added_lines) <= 20:
+                                    code_block = '\n'.join([line[1] for line in added_lines])
+                                    start_line = added_lines[0][0]
+                                    end_line = added_lines[-1][0]
+                                    
+                                    # 构建针对这个代码块的审查 prompt
+                                    block_prompt = f"""请审查以下代码片段（文件: {file_path}, 行 {start_line}-{end_line}）：
+
+```
+{code_block}
+```
+
+请简洁地指出：
+1. ❌ 严重问题（如果有）
+2. ⚠️ 潜在问题或改进建议（如果有）
+3. ✅ 好的做法（如果有）
+
+如果代码没有问题，请回复"✅ 代码正常"。
+请使用中文，简洁明了，不超过200字。"""
+                                    
+                                    # 调用 AI 审查这个代码块
+                                    try:
+                                        ai_response = requests.post(
+                                            'https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation',
+                                            headers={
+                                                'Authorization': f'Bearer {ai_api_key}',
+                                                'Content-Type': 'application/json'
+                                            },
+                                            json={
+                                                'model': ai_model,
+                                                'input': {'messages': [{'role': 'user', 'content': block_prompt}]},
+                                                'parameters': {'result_format': 'message'}
+                                            },
+                                            proxies={'http': None, 'https': None},
+                                            timeout=60
+                                        )
+                                        
+                                        if ai_response.status_code == 200:
+                                            ai_result = ai_response.json()
+                                            review_comment = ai_result['output']['choices'][0]['message']['content']
+                                            
+                                            # 只有在发现问题或有建议时才创建评论
+                                            if '✅ 代码正常' not in review_comment and review_comment.strip():
+                                                # 在 GitLab 上创建行内评论（使用 Comments API）
+                                                comment_url = f"{gitlab_url}/api/v4/projects/{project_path.replace('/', '%2F')}/repository/commits/{commit_sha}/comments"
+                                                comment_data = {
+                                                    'note': f"🤖 **AI 代码审查**\n\n**文件:** {file_path}:{start_line}\n\n{review_comment}",
+                                                    'path': file_path,
+                                                    'line': start_line,
+                                                    'line_type': 'new'
+                                                }
+                                                
+                                                comment_response = requests.post(
+                                                    comment_url,
+                                                    headers=headers,
+                                                    json=comment_data,
+                                                    timeout=30
+                                                )
+                                                
+                                                if comment_response.status_code in [200, 201]:
+                                                    comments_created += 1
+                                                    print(f"✅ 创建行内评论: {file_path}:{start_line}")
+                                                else:
+                                                    print(f"⚠️ 创建评论失败: {comment_response.status_code}")
+                                                    print(f"   错误详情: {comment_response.text}")
+                                                    print(f"   请求数据: {comment_data}")
+                                        
+                                    except Exception as e:
+                                        print(f"⚠️ 审查代码块失败: {e}")
+                                        continue
+                    
+                    # 构建详细的问题列表展示
+                    issues_summary = "## 📊 AI 代码审查结果\n\n"
+                    
+                    if issues:
+                        issues_summary += f"**发现 {len(issues)} 个需要关注的问题，已创建 {comments_created} 条行内评论**\n\n"
+                        
+                        # 按严重程度分组
+                        high_issues = [i for i in issues if i.get('severity') == 'high']
+                        medium_issues = [i for i in issues if i.get('severity') == 'medium']
+                        low_issues = [i for i in issues if i.get('severity') == 'low']
+                        
+                        if high_issues:
+                            issues_summary += "### 🔴 高危问题\n\n"
+                            for issue in high_issues:
+                                file_name = issue.get('file', '').split('/')[-1]
+                                issues_summary += f"- **{file_name}:{issue.get('line')}**\n"
+                                issues_summary += f"  - {issue.get('reason', '无描述')}\n\n"
+                        
+                        if medium_issues:
+                            issues_summary += "### 🟡 中等问题\n\n"
+                            for issue in medium_issues:
+                                file_name = issue.get('file', '').split('/')[-1]
+                                issues_summary += f"- **{file_name}:{issue.get('line')}**\n"
+                                issues_summary += f"  - {issue.get('reason', '无描述')}\n\n"
+                        
+                        if low_issues:
+                            issues_summary += "### 🟢 低危问题\n\n"
+                            for issue in low_issues:
+                                file_name = issue.get('file', '').split('/')[-1]
+                                issues_summary += f"- **{file_name}:{issue.get('line')}**\n"
+                                issues_summary += f"  - {issue.get('reason', '无描述')}\n\n"
+                        
+                        issues_summary += "\n💬 **详细的审查意见已添加到代码旁边，请在 GitLab Commit 页面查看行内评论。**"
+                    else:
+                        issues_summary += "✅ 代码质量良好，未发现需要关注的问题。"
+                    
+                    review_status[review_id]['progress'] = 100
+                    review_status[review_id]['status'] = 'success'
+                    review_status[review_id]['message'] = f'文件级审核完成！创建了 {comments_created} 条行内评论'
+                    review_status[review_id]['output'] = issues_summary
+                    
+                    # 保存历史记录
+                    save_history(commit_url, 'commit', 'success')
+                    return  # 文件级审核完成，直接返回
+                
+                else:
+                    # 总体审核 - 简洁模式
+                    prompt = f"""请对以下 Git Commit 的代码变更进行审查：
 
 代码变更：
 {diff_text}
@@ -1460,7 +1910,8 @@ def get_auto_review_config():
             'auto_review_min_changes': config.get('AUTO_REVIEW_MIN_CHANGES', '0'),
             'auto_review_push_enabled': config.get('AUTO_REVIEW_PUSH_ENABLED', 'false'),
             'auto_review_push_branches': config.get('AUTO_REVIEW_PUSH_BRANCHES', 'master,main'),
-            'auto_review_push_new_branch_all_commits': config.get('AUTO_REVIEW_PUSH_NEW_BRANCH_ALL_COMMITS', 'false')
+            'auto_review_push_new_branch_all_commits': config.get('AUTO_REVIEW_PUSH_NEW_BRANCH_ALL_COMMITS', 'false'),
+            'auto_review_file_level_enabled': config.get('AUTO_REVIEW_FILE_LEVEL_ENABLED', 'false')  # 文件级审核，默认关闭
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -1594,7 +2045,8 @@ def update_auto_review_config():
             'AUTO_REVIEW_MIN_CHANGES': data.get('auto_review_min_changes', '0'),
             'AUTO_REVIEW_PUSH_ENABLED': data.get('auto_review_push_enabled', 'false'),
             'AUTO_REVIEW_PUSH_BRANCHES': data.get('auto_review_push_branches', 'master,main'),
-            'AUTO_REVIEW_PUSH_NEW_BRANCH_ALL_COMMITS': data.get('auto_review_push_new_branch_all_commits', 'false')
+            'AUTO_REVIEW_PUSH_NEW_BRANCH_ALL_COMMITS': data.get('auto_review_push_new_branch_all_commits', 'false'),
+            'AUTO_REVIEW_FILE_LEVEL_ENABLED': data.get('auto_review_file_level_enabled', 'false')  # 文件级审核
         }
         
         # 更新配置
@@ -2085,6 +2537,123 @@ def review_commit_from_webhook(project, commit_sha):
         diffs = diff_response.json()
         print(f"✅ 获取到 {len(diffs)} 个文件的变更")
         
+        # 检查是否启用文件级审核
+        file_level_enabled = config.get('AUTO_REVIEW_FILE_LEVEL_ENABLED', 'false') == 'true'
+        review_mode = '文件级审核（行内评论）' if file_level_enabled else '总体审核'
+        print(f"📂 审查模式: {review_mode}")
+        
+        if file_level_enabled:
+            # 文件级审核 - 创建行内评论
+            print(f"🔍 开始文件级审核...")
+            comments_created = 0
+            total_files = min(len(diffs), 10)
+            
+            for idx, diff in enumerate(diffs[:10]):
+                file_path = diff['new_path']
+                diff_content = diff.get('diff', '')
+                
+                if not diff_content:
+                    continue
+                
+                print(f"📄 审查文件 {idx+1}/{total_files}: {file_path}")
+                
+                # 解析 diff 获取变更的行号
+                import re
+                hunks = re.findall(r'@@ -(\d+),?\d* \+(\d+),?\d* @@([^@]*)', diff_content)
+                
+                for hunk in hunks:
+                    old_start, new_start, hunk_content = hunk
+                    new_line = int(new_start)
+                    
+                    # 只分析新增或修改的行
+                    added_lines = []
+                    current_line = new_line
+                    for line in hunk_content.split('\n'):
+                        if line.startswith('+') and not line.startswith('+++'):
+                            added_lines.append((current_line, line[1:]))
+                            current_line += 1
+                        elif not line.startswith('-'):
+                            current_line += 1
+                    
+                    # 如果有新增的行，对这个代码块进行审查
+                    if added_lines and len(added_lines) <= 20:
+                        code_block = '\n'.join([line[1] for line in added_lines])
+                        start_line = added_lines[0][0]
+                        
+                        # 构建针对这个代码块的审查 prompt
+                        block_prompt = f"""请审查以下代码片段（文件: {file_path}, 行 {start_line}）：
+
+```
+{code_block}
+```
+
+请简洁地指出：
+1. ❌ 严重问题（如果有）
+2. ⚠️ 潜在问题或改进建议（如果有）
+3. ✅ 好的做法（如果有）
+
+如果代码没有问题，请回复"✅ 代码正常"。
+请使用中文，简洁明了，不超过200字。"""
+                        
+                        # 调用 AI 审查这个代码块
+                        try:
+                            ai_response = requests.post(
+                                'https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation',
+                                headers={
+                                    'Authorization': f'Bearer {ai_api_key}',
+                                    'Content-Type': 'application/json'
+                                },
+                                json={
+                                    'model': ai_model,
+                                    'input': {'messages': [{'role': 'user', 'content': block_prompt}]},
+                                    'parameters': {'result_format': 'message'}
+                                },
+                                proxies={'http': None, 'https': None},
+                                timeout=60
+                            )
+                            
+                            if ai_response.status_code == 200:
+                                ai_result = ai_response.json()
+                                review_comment = ai_result['output']['choices'][0]['message']['content']
+                                
+                                # 只有在发现问题或有建议时才创建评论
+                                if '✅ 代码正常' not in review_comment and review_comment.strip():
+                                    # 在 GitLab 上创建行内评论
+                                    discussion_url = f"{gitlab_url}/api/v4/projects/{project_path.replace('/', '%2F')}/repository/commits/{commit_sha}/discussions"
+                                    discussion_data = {
+                                        'body': f"🤖 **AI 代码审查（自动触发）**\n\n{review_comment}",
+                                        'position': {
+                                            'base_sha': commit_sha,
+                                            'start_sha': commit_sha,
+                                            'head_sha': commit_sha,
+                                            'position_type': 'text',
+                                            'new_path': file_path,
+                                            'new_line': start_line,
+                                            'old_path': diff.get('old_path', file_path),
+                                        }
+                                    }
+                                    
+                                    discussion_response = requests.post(
+                                        discussion_url,
+                                        headers=headers,
+                                        json=discussion_data,
+                                        timeout=30
+                                    )
+                                    
+                                    if discussion_response.status_code in [200, 201]:
+                                        comments_created += 1
+                                        print(f"  ✅ 创建行内评论: {file_path}:{start_line}")
+                                    else:
+                                        print(f"  ⚠️ 创建评论失败: {discussion_response.status_code}")
+                        
+                        except Exception as e:
+                            print(f"  ⚠️ 审查代码块失败: {e}")
+                            continue
+            
+            print(f"✅ 文件级审核完成！创建了 {comments_created} 条行内评论")
+            return
+        
+        # 总体审核 - 创建总评论
         # 构建 diff 文本
         diff_text = ""
         for diff in diffs[:10]:  # 限制最多10个文件

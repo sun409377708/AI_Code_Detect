@@ -498,11 +498,18 @@ window.reviewItem = async function(mrUrl, mrId) {
     progress.classList.remove('hidden');
 
     try {
+        // 获取文件级审核选项
+        const fileLevelEnabled = document.getElementById('manualReviewFileLevelEnabled')?.checked || false;
+        
         // 启动审查
         const response = await fetch('/api/review', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({mr_url: mrUrl, mr_id: mrId.toString()})
+            body: JSON.stringify({
+                mr_url: mrUrl, 
+                mr_id: mrId.toString(),
+                file_level_review: fileLevelEnabled  // 添加文件级审核参数
+            })
         });
 
         const data = await response.json();

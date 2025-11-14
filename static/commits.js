@@ -156,11 +156,18 @@ window.reviewCommit = async function(commitUrl, commitId, shortId) {
     progress.classList.remove('hidden');
     
     try {
+        // 获取文件级审核选项
+        const fileLevelEnabled = document.getElementById('manualReviewFileLevelEnabled')?.checked || false;
+        
         // 启动审查
         const response = await fetch('/api/commit/review', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({commit_url: commitUrl, commit_id: commitId})
+            body: JSON.stringify({
+                commit_url: commitUrl, 
+                commit_id: commitId,
+                file_level_review: fileLevelEnabled  // 添加文件级审核参数
+            })
         });
         
         const data = await response.json();
